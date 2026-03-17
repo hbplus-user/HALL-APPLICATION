@@ -70,7 +70,7 @@ export default function ExamPage() {
   useEffect(() => {
     if (!candidate?.id) return;
     const unsub = subscribeToCandidate(candidate.id, (updated) => {
-      const cmd = updated.adminCommand;
+      const cmd = updated.admin_command || updated.adminCommand;;
       if (!cmd) return;
       if (cmd === 'force-submit') handleSubmitExam('Admin forced submission');
       if (cmd === 'disqualify') handleDisqualify('Admin disqualified candidate');
@@ -82,7 +82,7 @@ export default function ExamPage() {
   const startExam = async () => {
     try {
       // Request fullscreen
-      try { await document.documentElement.requestFullscreen(); } catch {}
+      try { await document.documentElement.requestFullscreen(); } catch { }
 
       // Open camera
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -152,30 +152,30 @@ export default function ExamPage() {
   const setupWebRTC = async (stream) => {
     try {
       if (rtcPeerRef.current) rtcPeerRef.current.close();
-      
+
       rtcPeerRef.current = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
-      
+
       stream.getTracks().forEach(track => rtcPeerRef.current.addTrack(track, stream));
-      
+
       const offer = await rtcPeerRef.current.createOffer();
       await rtcPeerRef.current.setLocalDescription(offer);
-      
+
       // Wait a moment for ICE gathering to complete before broadcasting the offer
       await new Promise(resolve => {
         if (rtcPeerRef.current.iceGatheringState === 'complete') resolve();
         else {
           setTimeout(resolve, 1500); // Wait max 1.5s for ICE candidates
           rtcPeerRef.current.onicegatheringstatechange = () => {
-             if (rtcPeerRef.current.iceGatheringState === 'complete') resolve();
+            if (rtcPeerRef.current.iceGatheringState === 'complete') resolve();
           };
         }
       });
-      
+
       // Broadcast our offer
       await saveWebRTCOffer(candidate.id, { type: rtcPeerRef.current.localDescription.type, sdp: rtcPeerRef.current.localDescription.sdp });
-      
+
       // Listen for the answer from admin
       subscribeToWebRTCAnswer(candidate.id, async ({ answer }) => {
         if (answer && rtcPeerRef.current && rtcPeerRef.current.signalingState !== 'closed' && !rtcPeerRef.current.remoteDescription) {
@@ -192,9 +192,9 @@ export default function ExamPage() {
   useEffect(() => {
     if (!candidate?.id) return;
     const unsubReq = subscribeToWebRTCRequest(candidate.id, () => {
-       if (streamRef.current) {
-          setupWebRTC(streamRef.current);
-       }
+      if (streamRef.current) {
+        setupWebRTC(streamRef.current);
+      }
     });
     return unsubReq;
   }, [candidate?.id]);
@@ -221,11 +221,11 @@ export default function ExamPage() {
     showWarningOverlay(reason.replace(/_/g, ' '));
 
     const newWarning = { time: Math.floor((Date.now() - examStartTimeMsRef.current) / 1000), reason };
-    
+
     updateCandidateData(candidate.id, {
       warningCount: warnings + 1,
       warningTimestamps: [...(candidate.warningTimestamps || []), newWarning]
-    }).catch(() => {});
+    }).catch(() => { });
   }, [warnings, candidate]);
 
   const showWarningOverlay = (text) => {
@@ -246,7 +246,7 @@ export default function ExamPage() {
       if (result) {
         const snapObj = { url: result.url, path: result.path, reason, timestamp: new Date().toISOString() };
         addSnapshot(snapObj);
-        
+
         // Supabase JSONB arrays replace entirely, so we append to our local context array
         await updateCandidateData(candidate.id, {
           proctoringSnapshots: [...(candidate.proctoringSnapshots || []), snapObj]
@@ -280,12 +280,12 @@ export default function ExamPage() {
 
   const handleMouseLeave = useCallback(() => {
     if (examInProgressRef.current) {
-      updateCandidateData(candidate?.id, { cursorStatus: 'out' }).catch(() => {});
+      updateCandidateData(candidate?.id, { cursorStatus: 'out' }).catch(() => { });
     }
   }, [candidate?.id]);
 
   const handleMouseEnter = useCallback(() => {
-    if (candidate?.id) updateCandidateData(candidate.id, { cursorStatus: 'in' }).catch(() => {});
+    if (candidate?.id) updateCandidateData(candidate.id, { cursorStatus: 'in' }).catch(() => { });
   }, [candidate?.id]);
 
   const handleFullscreenChange = useCallback(() => {
@@ -369,7 +369,7 @@ export default function ExamPage() {
     if (direction === 'next' && currentQuestionIndex < examQuestions.length - 1) {
       const next = currentQuestionIndex + 1;
       setCurrentQuestionIndex(next);
-      updateCandidateData(candidate.id, { currentQuestionIndex: next, selectedAnswer: candidateAnswers[next] ?? null }).catch(() => {});
+      updateCandidateData(candidate.id, { currentQuestionIndex: next, selectedAnswer: candidateAnswers[next] ?? null }).catch(() => { });
     } else if (direction === 'prev' && currentQuestionIndex > sessionStartIndex) {
       setCurrentQuestionIndex(p => p - 1);
     }
@@ -379,7 +379,7 @@ export default function ExamPage() {
     const updated = [...candidateAnswers];
     updated[currentQuestionIndex] = optionNumber;
     setCandidateAnswers(updated);
-    updateCandidateData(candidate.id, { selectedAnswer: optionNumber }).catch(() => {});
+    updateCandidateData(candidate.id, { selectedAnswer: optionNumber }).catch(() => { });
   };
 
   const cleanup = () => {
@@ -395,7 +395,7 @@ export default function ExamPage() {
     document.body.removeEventListener('mouseleave', handleMouseLeave);
     document.body.removeEventListener('mouseenter', handleMouseEnter);
     document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch { }
   };
 
   if (!candidate || examQuestions.length === 0) return null;
