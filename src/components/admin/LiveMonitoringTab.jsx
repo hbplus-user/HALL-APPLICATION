@@ -8,14 +8,14 @@ import {
 } from '../../services/liveMonitoringService';
 import { showNotification } from '../common/NotificationSystem';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function calcRisk(c) {
   return Math.min(100,
-    (c.warningCount || 0) * 20 +
-    (c.tabSwitches || 0) * 15 +
-    (c.phoneDetections || 0) * 25 +
-    (c.speakingViolations || 0) * 10
+    (c.warning_count || c.warningCount || 0) * 20 +
+    (c.tab_switches || c.tabSwitches || 0) * 15 +
+    (c.phone_detections || c.phoneDetections || 0) * 25 +
+    (c.speaking_violations || c.speakingViolations || 0) * 10
   );
 }
 
@@ -25,15 +25,29 @@ function riskMeta(score) {
   return { label: 'LOW', bg: '#16a34a', text: '#fff' };
 }
 
-function elapsed(startTs) {
-  if (!startTs) return '—';
-  const secs = Math.floor((Date.now() - startTs) / 1000);
+function elapsed(startVal) {
+  if (!startVal) return '—';
+  // Handle ISO string or numeric ms
+  const ms = typeof startVal === 'number' ? startVal : new Date(startVal).getTime();
+  if (!ms || isNaN(ms)) return '—';
+  const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000));
   const m = Math.floor(secs / 60).toString().padStart(2, '0');
   const s = (secs % 60).toString().padStart(2, '0');
   return `${m}:${s}`;
 }
 
-// ─── Live Video Cell ─────────────────────────────────────────────────────────
+function timeLeft(startVal, totalSecs = 1800) {
+  if (!startVal) return '—';
+  const ms = typeof startVal === 'number' ? startVal : new Date(startVal).getTime();
+  if (!ms || isNaN(ms)) return '—';
+  const elapsed = Math.floor((Date.now() - ms) / 1000);
+  const remaining = Math.max(0, totalSecs - elapsed);
+  const m = Math.floor(remaining / 60).toString().padStart(2, '0');
+  const s = (remaining % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+// ─── Live Video Cell ──────────────────────────────────────────────────────────
 
 function LiveVideoCell({ candidateId, snapshotUrl }) {
   const videoRef = useRef(null);
@@ -46,7 +60,10 @@ function LiveVideoCell({ candidateId, snapshotUrl }) {
     (async () => {
       try {
         peerRef.current = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+          ],
         });
         peerRef.current.ontrack = (e) => {
           if (videoRef.current && e.streams?.[0]) {
@@ -56,21 +73,19 @@ function LiveVideoCell({ candidateId, snapshotUrl }) {
         };
         unsubWrtc = subscribeToWebRTCOffer(candidateId, async (session) => {
           if (session.offer && peerRef.current && !peerRef.current.remoteDescription) {
-            await peerRef.current.setRemoteDescription(
-              new RTCSessionDescription(session.offer)
-            );
+            await peerRef.current.setRemoteDescription(new RTCSessionDescription(session.offer));
             const answer = await peerRef.current.createAnswer();
             await peerRef.current.setLocalDescription(answer);
-            // Give ICE candidates a moment
             await new Promise(r => setTimeout(r, 500));
-            await saveWebRTCAnswer(candidateId, { type: peerRef.current.localDescription.type, sdp: peerRef.current.localDescription.sdp });
+            await saveWebRTCAnswer(candidateId, {
+              type: peerRef.current.localDescription.type,
+              sdp: peerRef.current.localDescription.sdp
+            });
           }
         });
-
-        // Request an offer from the candidate now that we're listening
         await requestWebRTCOffer(candidateId);
       } catch {
-        // WebRTC unavailable – fall through to snapshot
+        // WebRTC unavailable — snapshot fallback shown below
       }
     })();
     return () => {
@@ -85,16 +100,12 @@ function LiveVideoCell({ candidateId, snapshotUrl }) {
       background: '#0f172a', borderRadius: 10, overflow: 'hidden',
     }}>
       <video
-        ref={videoRef}
-        autoPlay playsInline muted={isMuted}
+        ref={videoRef} autoPlay playsInline muted={isMuted}
         style={{ width: '100%', height: '100%', objectFit: 'cover', display: hasStream ? 'block' : 'none' }}
       />
       {!hasStream && snapshotUrl && (
-        <img
-          src={snapshotUrl}
-          alt="Last snapshot"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-        />
+        <img src={snapshotUrl} alt="Last snapshot"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
       )}
       {!hasStream && !snapshotUrl && (
         <div style={{
@@ -114,13 +125,10 @@ function LiveVideoCell({ candidateId, snapshotUrl }) {
       }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%', background: '#fff',
-          animation: 'livePulse 1.2s infinite',
-          display: 'inline-block',
+          animation: 'livePulse 1.2s infinite', display: 'inline-block',
         }} />
         LIVE
       </div>
-
-      {/* Mute Toggle */}
       {hasStream && (
         <button
           onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted); }}
@@ -129,18 +137,18 @@ function LiveVideoCell({ candidateId, snapshotUrl }) {
             background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none',
             borderRadius: '50%', width: 28, height: 28,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', zIndex: 10, transition: 'background 0.2s',
+            cursor: 'pointer', zIndex: 10,
           }}
-          title={isMuted ? "Unmute feed" : "Mute feed"}
         >
-          <i className={`fas fa-volume-${isMuted ? 'mute' : 'up'}`} style={{ fontSize: '0.8rem', color: isMuted ? '#f87171' : '#fff' }} />
+          <i className={`fas fa-volume-${isMuted ? 'mute' : 'up'}`}
+            style={{ fontSize: '0.8rem', color: isMuted ? '#f87171' : '#fff' }} />
         </button>
       )}
     </div>
   );
 }
 
-// ─── Violation Timeline ──────────────────────────────────────────────────────
+// ─── Violation Timeline ───────────────────────────────────────────────────────
 
 function ViolationTimeline({ timestamps }) {
   if (!timestamps?.length) return null;
@@ -171,23 +179,40 @@ function ViolationTimeline({ timestamps }) {
   );
 }
 
-// ─── Candidate Card ──────────────────────────────────────────────────────────
+// ─── Candidate Card ───────────────────────────────────────────────────────────
 
-function CandidateCard({ candidate, onViewDetails, elapsedTime }) {
+function CandidateCard({ candidate, onViewDetails, tick }) {
   const [sending, setSending] = useState(false);
   const risk = calcRisk(candidate);
   const meta = riskMeta(risk);
-  const lastSnap = candidate.proctoringSnapshots?.slice(-1)[0]?.url;
-  const avatarSrc = candidate.photo || candidate.photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name || candidate.email)}&background=4361ee&color=fff&size=64`;
+
+  // Support both snake_case (from DB) and camelCase (from mapped frontend)
+  const currentQ = candidate.current_question_index ?? candidate.currentQuestionIndex ?? 0;
+  const totalQ = candidate.total_questions ?? candidate.totalQuestions ?? 0;
+  const warnCount = candidate.warning_count ?? candidate.warningCount ?? 0;
+  const tabSw = candidate.tab_switches ?? candidate.tabSwitches ?? 0;
+  const phoneDet = candidate.phone_detections ?? candidate.phoneDetections ?? 0;
+  const speakViol = candidate.speaking_violations ?? candidate.speakingViolations ?? 0;
+  const snapshots = candidate.proctoring_snapshots ?? candidate.proctoringSnapshots ?? [];
+  const warnTs = candidate.warning_timestamps ?? candidate.warningTimestamps ?? [];
+  const startTime = candidate.exam_start_time ?? candidate.examStartTime;
+  const selectedAns = candidate.selected_answer ?? candidate.selectedAnswer;
+
+  const lastSnap = snapshots.slice(-1)[0]?.url;
+  const avatarSrc = candidate.photo || candidate.photo_url ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name || candidate.email)}&background=4361ee&color=fff&size=64`;
+
+  const elapsedStr = elapsed(startTime);
+  const remainingStr = timeLeft(startTime, 1800);
+  const progressPct = totalQ > 0 ? ((currentQ + 1) / totalQ) * 100 : 0;
 
   const doCommand = async (cmd) => {
     setSending(true);
     try {
       await sendAdminCommand(candidate.id, cmd);
       showNotification(`"${cmd}" sent to ${candidate.name || candidate.email}`, 'success');
-    } catch {
-      console.error("Command Error:", error);
-      showNotification('Failed to send command', 'error');
+    } catch (e) {
+      showNotification('Failed to send command: ' + e.message, 'error');
     } finally {
       setSending(false);
     }
@@ -197,57 +222,52 @@ function CandidateCard({ candidate, onViewDetails, elapsedTime }) {
 
   return (
     <div style={{
-      border: cardBorder,
-      borderRadius: 14, background: 'white',
+      border: cardBorder, borderRadius: 14, background: 'white',
       boxShadow: risk >= 61 ? '0 4px 20px rgba(220,38,38,0.15)' : '0 4px 12px rgba(0,0,0,0.07)',
-      display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden',
-      transition: 'box-shadow 0.2s',
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
-
-      {/* ── Card Header ── */}
+      {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
         background: risk >= 61 ? '#fef2f2' : risk >= 31 ? '#fffbeb' : '#f0fdf4',
         borderBottom: '1px solid var(--border)',
       }}>
-        <img src={avatarSrc} alt={candidate.name} style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0 }} />
+        <img src={avatarSrc} alt={candidate.name}
+          style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {candidate.name || candidate.email}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--gray)' }}>
-            {candidate.role} &nbsp;·&nbsp; ⏱ {elapsedTime}
+            {candidate.role} &nbsp;·&nbsp; ⏱ {elapsedStr} elapsed
           </div>
         </div>
-        {/* Risk badge */}
         <div style={{
           background: meta.bg, color: meta.text,
           borderRadius: 8, padding: '4px 10px',
-          fontSize: '0.75rem', fontWeight: 800, letterSpacing: 0.5, flexShrink: 0,
+          fontSize: '0.75rem', fontWeight: 800, flexShrink: 0,
         }}>
           {meta.label} {risk}/100
         </div>
       </div>
 
-      {/* ── Live Video ── */}
+      {/* Live video */}
       <div style={{ padding: '10px 14px 0' }}>
         <LiveVideoCell candidateId={candidate.id} snapshotUrl={lastSnap} />
       </div>
 
-      {/* ── Stats Grid ── */}
+      {/* Stats grid */}
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6,
         padding: '10px 14px', borderBottom: '1px solid var(--border)',
       }}>
         {[
-          { icon: 'exclamation-triangle', color: '#dc2626', label: 'Warnings', value: `${candidate.warningCount || 0}/3` },
-          { icon: 'exchange-alt', color: '#7c3aed', label: 'Tab Switch', value: candidate.tabSwitches || 0 },
-          { icon: 'mobile-alt', color: '#b45309', label: 'Phone', value: candidate.phoneDetections || 0 },
-          { icon: 'microphone', color: '#0369a1', label: 'Speaking', value: candidate.speakingViolations || 0 },
+          { icon: 'exclamation-triangle', color: '#dc2626', label: 'Warnings', value: `${warnCount}/3` },
+          { icon: 'exchange-alt', color: '#7c3aed', label: 'Tab Switch', value: tabSw },
+          { icon: 'mobile-alt', color: '#b45309', label: 'Phone', value: phoneDet },
+          { icon: 'microphone', color: '#0369a1', label: 'Speaking', value: speakViol },
         ].map(stat => (
-          <div key={stat.label} style={{
-            textAlign: 'center', background: '#f8fafc', borderRadius: 8, padding: '6px 2px',
-          }}>
+          <div key={stat.label} style={{ textAlign: 'center', background: '#f8fafc', borderRadius: 8, padding: '6px 2px' }}>
             <i className={`fas fa-${stat.icon}`} style={{ color: stat.color, fontSize: '0.85rem' }} />
             <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111', marginTop: 2 }}>{stat.value}</div>
             <div style={{ fontSize: '0.6rem', color: 'var(--gray)', lineHeight: 1.2 }}>{stat.label}</div>
@@ -255,63 +275,59 @@ function CandidateCard({ candidate, onViewDetails, elapsedTime }) {
         ))}
       </div>
 
-      {/* ── Question Progress ── */}
-      <div style={{ padding: '8px 14px', fontSize: '0.82rem', color: '#374151', borderBottom: '1px solid var(--border)' }}>
-        <span>📋 Question <strong>{(candidate.currentQuestionIndex || 0) + 1}</strong> / {candidate.totalQuestions || '?'}</span>
-        {candidate.selectedAnswer != null && (
-          <span style={{ marginLeft: 10, color: '#16a34a', fontWeight: 600 }}>
-            ✅ Option {candidate.selectedAnswer} selected
+      {/* Question progress — key section */}
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: '0.82rem', color: '#374151' }}>
+            📋 Question <strong>{currentQ + 1}</strong> / <strong>{totalQ || '?'}</strong>
           </span>
+          <span style={{ fontSize: '0.78rem', color: '#6b7280' }}>
+            ⏰ {remainingStr} left
+          </span>
+        </div>
+        {selectedAns != null && (
+          <div style={{ fontSize: '0.78rem', color: '#16a34a', fontWeight: 600, marginBottom: 4 }}>
+            ✅ Option {selectedAns} selected
+          </div>
         )}
-        {/* Mini progress bar */}
-        <div style={{ background: '#e5e7eb', borderRadius: 4, height: 4, marginTop: 6 }}>
+        {/* Progress bar */}
+        <div style={{ background: '#e5e7eb', borderRadius: 4, height: 6 }}>
           <div style={{
             height: '100%', borderRadius: 4, background: '#4361ee',
-            width: `${candidate.totalQuestions ? ((candidate.currentQuestionIndex || 0) + 1) / candidate.totalQuestions * 100 : 0}%`,
-            transition: 'width 0.4s ease',
+            width: `${progressPct}%`, transition: 'width 0.4s ease',
           }} />
+        </div>
+        <div style={{ fontSize: '0.68rem', color: '#9ca3af', marginTop: 3, textAlign: 'right' }}>
+          {Math.round(progressPct)}% complete
         </div>
       </div>
 
-      {/* ── Violation Timeline ── */}
+      {/* Violation timeline */}
       <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)' }}>
-        <ViolationTimeline timestamps={candidate.warningTimestamps} />
-        {!candidate.warningTimestamps?.length && (
+        <ViolationTimeline timestamps={warnTs} />
+        {!warnTs.length && (
           <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>No violations recorded yet</span>
         )}
       </div>
 
-      {/* ── Admin Action Buttons ── */}
+      {/* Action buttons */}
       <div style={{ display: 'flex', gap: 6, padding: '10px 14px', flexWrap: 'wrap' }}>
-        <button
-          className="btn btn-sm btn-primary"
-          style={{ fontSize: '0.75rem' }}
-          onClick={() => onViewDetails(candidate)}
-        >
+        <button className="btn btn-sm btn-primary" style={{ fontSize: '0.75rem' }}
+          onClick={() => onViewDetails(candidate)}>
           <i className="fas fa-eye" /> View
         </button>
-        <button
-          className="btn btn-sm"
+        <button className="btn btn-sm"
           style={{ fontSize: '0.75rem', background: '#f59e0b', color: '#000', border: 'none' }}
-          disabled={sending}
-          onClick={() => doCommand('warn')}
-        >
+          disabled={sending} onClick={() => doCommand('warn')}>
           ⚠️ Warn
         </button>
-        <button
-          className="btn btn-sm"
+        <button className="btn btn-sm"
           style={{ fontSize: '0.75rem', background: '#7c3aed', color: '#fff', border: 'none' }}
-          disabled={sending}
-          onClick={() => doCommand('force-submit')}
-        >
+          disabled={sending} onClick={() => doCommand('force-submit')}>
           📤 Submit
         </button>
-        <button
-          className="btn btn-sm btn-danger"
-          style={{ fontSize: '0.75rem' }}
-          disabled={sending}
-          onClick={() => doCommand('disqualify')}
-        >
+        <button className="btn btn-sm btn-danger" style={{ fontSize: '0.75rem' }}
+          disabled={sending} onClick={() => doCommand('disqualify')}>
           ❌ DQ
         </button>
       </div>
@@ -319,15 +335,15 @@ function CandidateCard({ candidate, onViewDetails, elapsedTime }) {
   );
 }
 
-// ─── Main Tab ────────────────────────────────────────────────────────────────
+// ─── Main Tab ─────────────────────────────────────────────────────────────────
 
 export default function LiveMonitoringTab({ onViewCandidate }) {
   const [liveCandidates, setLiveCandidates] = useState([]);
-  const [sortBy, setSortBy] = useState('risk'); // 'risk' | 'name' | 'recent'
-  const [filterRisk, setFilterRisk] = useState('all'); // 'all' | 'high' | 'medium' | 'low'
+  const [sortBy, setSortBy] = useState('risk');
+  const [filterRisk, setFilterRisk] = useState('all');
   const [tick, setTick] = useState(0);
 
-  // Re-render every second to update elapsed timers
+  // Re-render every second for elapsed/remaining timers
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(id);
@@ -338,7 +354,6 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
     return unsub;
   }, []);
 
-  // Compute display list
   const enriched = liveCandidates.map(c => ({ ...c, _risk: calcRisk(c) }));
 
   const filtered = enriched.filter(c => {
@@ -358,7 +373,6 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
 
   return (
     <div>
-      {/* Keyframe for live pulse */}
       <style>{`
         @keyframes livePulse {
           0%, 100% { opacity: 1; transform: scale(1); }
@@ -366,7 +380,7 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
         }
       `}</style>
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 18 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{
@@ -375,8 +389,6 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
           }} />
           <h3 style={{ margin: 0 }}>Live Monitoring</h3>
         </div>
-
-        {/* Summary pills */}
         <div style={{ display: 'flex', gap: 8, flex: 1, flexWrap: 'wrap' }}>
           <span style={{ background: '#dbeafe', color: '#1e40af', borderRadius: 20, padding: '3px 12px', fontSize: '0.8rem', fontWeight: 600 }}>
             {liveCandidates.length} Active
@@ -387,36 +399,27 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
             </span>
           )}
         </div>
-
-        {/* Controls */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <select
-            value={filterRisk}
-            onChange={e => setFilterRisk(e.target.value)}
-            style={{ fontSize: '0.8rem', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer' }}
-          >
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <select value={filterRisk} onChange={e => setFilterRisk(e.target.value)}
+            style={{ fontSize: '0.8rem', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer' }}>
             <option value="all">All Risk Levels</option>
             <option value="high">🔴 High Risk</option>
             <option value="medium">🟡 Medium Risk</option>
             <option value="low">🟢 Low Risk</option>
           </select>
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value)}
-            style={{ fontSize: '0.8rem', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer' }}
-          >
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+            style={{ fontSize: '0.8rem', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer' }}>
             <option value="risk">Sort: Risk ↓</option>
             <option value="name">Sort: Name A–Z</option>
           </select>
         </div>
       </div>
 
-      {/* ── Empty State ── */}
       {liveCandidates.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--gray)' }}>
           <i className="fas fa-video" style={{ fontSize: '3rem', opacity: 0.3 }} />
           <p style={{ marginTop: 12, fontSize: '1.05rem', fontWeight: 500 }}>No live exams in progress</p>
-          <p style={{ fontSize: '0.85rem', opacity: 0.7 }}>Candidate cards will appear here in real-time when an exam starts.</p>
+          <p style={{ fontSize: '0.85rem', opacity: 0.7 }}>Cards appear here in real-time when an exam starts.</p>
         </div>
       ) : sorted.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--gray)' }}>
@@ -429,7 +432,7 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
               key={c.id}
               candidate={c}
               onViewDetails={onViewCandidate}
-              elapsedTime={elapsed(c.examStartTime?.toMillis?.() || c.examStartTime)}
+              tick={tick}
             />
           ))}
         </div>

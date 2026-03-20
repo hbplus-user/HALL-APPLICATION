@@ -49,30 +49,39 @@ export const useFaceDetection = () => {
     }
   }, []);
 
-  const analyzeFaceResult = useCallback((result) => {
-    if (!result) return { faceCount: 0, isLookingAway: false, mouthOpen: false };
-
-    const faceCount = result.faceLandmarks?.length ?? 0;
-    let isLookingAway = false;
-    let mouthOpen = false;
-
-    if (faceCount > 0 && result.faceBlendshapes?.[0]) {
-      const shapes = result.faceBlendshapes[0].categories;
-      const get = (name) => shapes.find(s => s.categoryName === name)?.score ?? 0;
-
-      const headYaw = result.faceLandmarks[0];
-      // Simple gaze check using nose tip vs face width
-      if (headYaw) {
-        const noseTip = headYaw[4];
-        if (noseTip && (noseTip.x < 0.2 || noseTip.x > 0.8)) isLookingAway = true;
-      }
-
-      const mouthOpenScore = (get('mouthOpen') + get('jawOpen')) / 2;
-      mouthOpen = mouthOpenScore > 0.3;
+  const analyzeFaceResult = (results) => {
+    if (!results || !results.faceLandmarks || results.faceLandmarks.length === 0) {
+      return { faceCount: 0, isLookingAway: false, isHeadTurned: false };
     }
 
-    return { faceCount, isLookingAway, mouthOpen };
-  }, []);
+    const faceCount = results.faceLandmarks.length;
+    if (faceCount > 1) {
+      return { faceCount, isLookingAway: false, isHeadTurned: false };
+    }
+
+    const landmarks = results.faceLandmarks[0];
+
+    // 1. Head Turn Calculation (from old script)
+    const nose = landmarks[1].x;
+    const leftCorner = landmarks[130].x;
+    const rightCorner = landmarks[359].x;
+    const faceWidth = rightCorner - leftCorner;
+    const headRatio = (nose - leftCorner) / faceWidth;
+
+    // Threshold from old PROCTOR_CONFIG (0.15)
+    const isHeadTurned = headRatio < 0.15 || headRatio > 0.85;
+
+    // 2. Gaze Calculation (from old script)
+    const leftIris = landmarks[473];
+    const rightIris = landmarks[468];
+    const irisAvgX = (leftIris.x + rightIris.x) / 2;
+    const gazeRatio = (irisAvgX - leftCorner) / faceWidth;
+
+    // Threshold from old PROCTOR_CONFIG (0.35)
+    const isLookingAway = gazeRatio < 0.35 || gazeRatio > 0.65;
+
+    return { faceCount, isLookingAway, isHeadTurned };
+  };
 
   return { initFaceDetection, detectFaces, analyzeFaceResult };
 };

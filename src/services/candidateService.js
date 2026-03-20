@@ -9,110 +9,181 @@ const mapToFrontend = (c) => {
     subRole: c.sub_role,
     tokenId: c.token_id,
     photoUrl: c.photo_url,
-    currentQuestionIndex: c.current_question_index,
-    examQuestions: c.exam_questions,
-    candidateAnswers: c.candidate_answers,
-    examStartTime: c.exam_start_time,
+    currentQuestionIndex: c.current_question_index ?? 0,
+    totalQuestions: c.total_questions ?? 0,
+    examStartTime: c.exam_start_time_ms ?? c.exam_start_time,
     examEndTime: c.exam_end_time,
     disqualificationReason: c.disqualification_reason,
-    warningCount: c.warning_count,
-    phoneDetections: c.phone_detections,
-    speakingViolations: c.speaking_violations,
-    tabSwitches: c.tab_switches,
+    warningCount: c.warning_count ?? 0,
+    phoneDetections: c.phone_detections ?? 0,
+    speakingViolations: c.speaking_violations ?? 0,
+    tabSwitches: c.tab_switches ?? 0,
     recordingUrl: c.recording_url,
     recordingPath: c.recording_path,
-    videoTimestamps: c.video_timestamps,
-    proctoringSnapshots: c.proctoring_snapshots,
+    warningTimestamps: c.warning_timestamps ?? [],
+    proctoringSnapshots: c.proctoring_snapshots ?? [],
+    examResults: c.exam_results ?? null,
+    selectedAnswer: c.selected_answer,
+    assignedPacks: c.assigned_packs ?? [],
+    riskScore: c.risk_score ?? 0,
   };
 };
 
 const mapToDb = (c) => {
-  const payload = {};
-  if (c.email !== undefined) payload.email = c.email;
-  if (c.name !== undefined) payload.name = c.name;
-  if (c.role !== undefined) payload.role = c.role;
-  if (c.subRole !== undefined) payload.sub_role = c.subRole;
-  if (c.status !== undefined) payload.status = c.status;
-  if (c.tokenId !== undefined) payload.token_id = c.tokenId;
-  if (c.photoUrl !== undefined) payload.photo_url = c.photoUrl;
-  if (c.score !== undefined) payload.score = c.score;
-  if (c.currentQuestionIndex !== undefined) payload.current_question_index = c.currentQuestionIndex;
-  if (c.examQuestions !== undefined) payload.exam_questions = c.examQuestions;
-  if (c.candidateAnswers !== undefined) payload.candidate_answers = c.candidateAnswers;
-  
-  if (c.examStartTime !== undefined) payload.exam_start_time = c.examStartTime;
-  if (c.exam_start_time !== undefined) payload.exam_start_time = c.exam_start_time; // Fallback if already snake
-  
-  if (c.examEndTime !== undefined) payload.exam_end_time = c.examEndTime;
-  if (c.exam_end_time !== undefined) payload.exam_end_time = c.exam_end_time;
-  
-  if (c.disqualificationReason !== undefined) payload.disqualification_reason = c.disqualificationReason;
-  if (c.warningCount !== undefined) payload.warning_count = c.warningCount;
-  if (c.phoneDetections !== undefined) payload.phone_detections = c.phoneDetections;
-  if (c.speakingViolations !== undefined) payload.speaking_violations = c.speakingViolations;
-  if (c.tabSwitches !== undefined) payload.tab_switches = c.tabSwitches;
-  if (c.recordingUrl !== undefined) payload.recording_url = c.recordingUrl;
-  if (c.recordingPath !== undefined) payload.recording_path = c.recordingPath;
-  if (c.videoTimestamps !== undefined) payload.video_timestamps = c.videoTimestamps;
-  if (c.video_timestamps !== undefined) payload.video_timestamps = c.video_timestamps;
-  if (c.proctoringSnapshots !== undefined) payload.proctoring_snapshots = c.proctoringSnapshots;
-  if (c.proctoring_snapshots !== undefined) payload.proctoring_snapshots = c.proctoring_snapshots;
-  return payload;
+  const p = {};
+  if (c.email !== undefined) p.email = c.email;
+  if (c.name !== undefined) p.name = c.name;
+  if (c.role !== undefined) p.role = c.role;
+  if (c.subRole !== undefined) p.sub_role = c.subRole;
+  if (c.status !== undefined) p.status = c.status;
+  if (c.tokenId !== undefined) p.token_id = c.tokenId;
+  if (c.token_id !== undefined) p.token_id = c.token_id;
+  if (c.photo !== undefined) p.photo = c.photo;
+  if (c.photoUrl !== undefined) p.photo_url = c.photoUrl;
+  if (c.score !== undefined) p.score = c.score;
+
+  // Live monitoring
+  if (c.currentQuestionIndex !== undefined) p.current_question_index = c.currentQuestionIndex;
+  if (c.current_question_index !== undefined) p.current_question_index = c.current_question_index;
+  if (c.totalQuestions !== undefined) p.total_questions = c.totalQuestions;
+  if (c.total_questions !== undefined) p.total_questions = c.total_questions;
+  if (c.selectedAnswer !== undefined) p.selected_answer = c.selectedAnswer;
+
+  // Start time: store numeric ms separately so elapsed timer works
+  if (c.examStartTime !== undefined) {
+    if (typeof c.examStartTime === 'number') p.exam_start_time_ms = c.examStartTime;
+    else p.exam_start_time = c.examStartTime;
+  }
+  if (c.exam_start_time !== undefined) p.exam_start_time = c.exam_start_time;
+  if (c.examEndTime !== undefined) p.exam_end_time = c.examEndTime;
+  if (c.exam_end_time !== undefined) p.exam_end_time = c.exam_end_time;
+
+  if (c.disqualificationReason !== undefined) p.disqualification_reason = c.disqualificationReason;
+
+  // Violation counters
+  if (c.warningCount !== undefined) p.warning_count = c.warningCount;
+  if (c.warning_count !== undefined) p.warning_count = c.warning_count;
+  if (c.phoneDetections !== undefined) p.phone_detections = c.phoneDetections;
+  if (c.phone_detections !== undefined) p.phone_detections = c.phone_detections;
+  if (c.speakingViolations !== undefined) p.speaking_violations = c.speakingViolations;
+  if (c.speaking_violations !== undefined) p.speaking_violations = c.speaking_violations;
+  if (c.tabSwitches !== undefined) p.tab_switches = c.tabSwitches;
+  if (c.tab_switches !== undefined) p.tab_switches = c.tab_switches;
+
+  // Recording
+  if (c.recordingUrl !== undefined) p.recording_url = c.recordingUrl;
+  if (c.recording_url !== undefined) p.recording_url = c.recording_url;
+  if (c.recordingPath !== undefined) p.recording_path = c.recordingPath;
+  if (c.recording_path !== undefined) p.recording_path = c.recording_path;
+
+  // JSONB arrays
+  if (c.warningTimestamps !== undefined) p.warning_timestamps = c.warningTimestamps;
+  if (c.warning_timestamps !== undefined) p.warning_timestamps = c.warning_timestamps;
+  if (c.proctoringSnapshots !== undefined) p.proctoring_snapshots = c.proctoringSnapshots;
+  if (c.proctoring_snapshots !== undefined) p.proctoring_snapshots = c.proctoring_snapshots;
+
+  // Full exam results JSONB — { questions: [...], answers: [...] }
+  if (c.examResults !== undefined) p.exam_results = c.examResults;
+  if (c.exam_results !== undefined) p.exam_results = c.exam_results;
+
+  // Misc
+  if (c.deviceFingerprint !== undefined) p.device_fingerprint = c.deviceFingerprint;
+  if (c.adminCommand !== undefined) p.admin_command = c.adminCommand;
+  if (c.admin_command !== undefined) p.admin_command = c.admin_command;
+  if (c.cursorStatus !== undefined) p.cursor_status = c.cursorStatus;
+  if (c.assignedPacks !== undefined) p.assigned_packs = c.assignedPacks;
+  if (c.riskScore !== undefined) p.risk_score = c.riskScore;
+
+  return p;
 };
 
 export const getCandidates = async () => {
   try {
-    const { data, error } = await supabase.from(TABLE).select('*').order('exam_start_time', { ascending: false });
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .order('exam_start_time', { ascending: false });
     if (error) throw error;
     return (data || []).map(mapToFrontend);
   } catch (e) {
-    console.error('Error fetching candidates:', e);
+    console.error('getCandidates:', e);
     return [];
   }
 };
 
 export const findCandidateByEmail = async (email) => {
   try {
-    const { data, error } = await supabase.from(TABLE).select('*').eq('email', email).order('exam_start_time', { ascending: false }).limit(1).single();
-    if (error && error.code !== 'PGRST116') throw error; // PGRST116 = not found
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('email', email)
+      .order('exam_start_time', { ascending: false })
+      .limit(1)
+      .single();
+    if (error && error.code !== 'PGRST116') throw error;
     return mapToFrontend(data);
   } catch (e) {
-    console.error('Error finding candidate:', e);
+    console.error('findCandidateByEmail:', e);
     return null;
   }
 };
 
 export const getCandidateById = async (id) => {
   try {
-    const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).single();
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('id', id)
+      .single();
     if (error && error.code !== 'PGRST116') throw error;
     return mapToFrontend(data);
   } catch (e) {
-    console.error('Error getting candidate by ID:', e);
+    console.error('getCandidateById:', e);
     return null;
   }
 };
 
 export const setCandidateData = async (candidateId, candidateData) => {
   try {
-    let payload = mapToDb(candidateData);
-    
-    // UUID format check
+    const payload = mapToDb(candidateData);
+
+    // If we have a valid UUID candidateId, try UPDATE first, then INSERT
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (candidateId && uuidRegex.test(candidateId)) {
-        payload.id = candidateId;
+    const hasUUID = candidateId && uuidRegex.test(candidateId);
+
+    if (hasUUID) {
+      // Try to update existing row first
+      const { data: updated, error: updateError } = await supabase
+        .from(TABLE)
+        .update(payload)
+        .eq('id', candidateId)
+        .select()
+        .single();
+
+      if (!updateError && updated) return mapToFrontend(updated);
+
+      // Row doesn't exist yet — insert it
+      payload.id = candidateId;
+      const { data: inserted, error: insertError } = await supabase
+        .from(TABLE)
+        .insert(payload)
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+      return mapToFrontend(inserted);
     }
 
+    // No UUID — plain insert (new candidate from login)
     const { data, error } = await supabase
       .from(TABLE)
-      .upsert(payload)
+      .insert(payload)
       .select()
       .single();
-
     if (error) throw error;
     return mapToFrontend(data);
   } catch (e) {
-    console.error('Error setting candidate data:', e);
+    console.error('setCandidateData:', e);
     return null;
   }
 };
@@ -120,12 +191,15 @@ export const setCandidateData = async (candidateId, candidateData) => {
 export const updateCandidateData = async (candidateId, updateData) => {
   try {
     if (!candidateId) return false;
-    let payload = mapToDb(updateData);
-    const { error } = await supabase.from(TABLE).update(payload).eq('id', candidateId);
+    const payload = mapToDb(updateData);
+    const { error } = await supabase
+      .from(TABLE)
+      .update(payload)
+      .eq('id', candidateId);
     if (error) throw error;
     return true;
   } catch (e) {
-    console.error('Error updating candidate data:', e);
+    console.error('updateCandidateData:', e);
     return false;
   }
 };
@@ -136,7 +210,7 @@ export const deleteCandidates = async (ids) => {
     if (error) throw error;
     return true;
   } catch (e) {
-    console.error('Error deleting candidates:', e);
+    console.error('deleteCandidates:', e);
     return false;
   }
 };
@@ -153,13 +227,14 @@ export const subscribeToCandidates = (callback) => {
 };
 
 export const subscribeToCandidate = (candidateId, callback) => {
-  if (!candidateId) return () => {};
+  if (!candidateId) return () => { };
   getCandidateById(candidateId).then(data => data && callback(data));
   const sub = supabase
     .channel(`public:candidates:id=eq.${candidateId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: `id=eq.${candidateId}` }, (payload) => {
-      callback(mapToFrontend(payload.new));
-    })
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: TABLE, filter: `id=eq.${candidateId}` },
+      (payload) => { callback(mapToFrontend(payload.new)); }
+    )
     .subscribe();
   return () => supabase.removeChannel(sub);
 };

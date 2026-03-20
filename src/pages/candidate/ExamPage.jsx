@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useExam } from '../../contexts/ExamContext';
 import { useProctor } from '../../contexts/ProctorContext';
@@ -15,41 +15,66 @@ import QuestionPanel from '../../components/candidate/QuestionPanel';
 import ProctorPanel from '../../components/candidate/ProctorPanel';
 import WarningOverlay from '../../components/candidate/WarningOverlay';
 
-const SNAPSHOT_INTERVAL = 30000; // 30 seconds
+const SNAPSHOT_INTERVAL = 30000;
 const RANDOM_SNAPSHOT_MIN = 60000;
 const RANDOM_SNAPSHOT_MAX = 120000;
+const LIVE_SYNC_INTERVAL = 3000; // every 3s for snappier live updates
 
 export default function ExamPage() {
   const navigate = useNavigate();
   const {
     candidate, setCandidate, examQuestions, candidateAnswers, setCandidateAnswers,
-    currentQuestionIndex, setCurrentQuestionIndex, timeLeft, setTimeLeft,
-    examInProgress, setExamInProgress, setExamStartTimeMs, sessionStartIndex, setSessionStartIndex,
+    currentQuestionIndex, setCurrentQuestionIndex, timeLeft,
+    setExamInProgress, setExamStartTimeMs, sessionStartIndex,
     startTimer, stopTimer
   } = useExam();
   const {
     warnings, addWarning, addSnapshot, warningTimestamps, proctoringSnapshots,
     tabSwitches, setTabSwitches, phoneDetections, setPhoneDetections,
-    speakingViolations, setSpeakingViolations, disqualified, setDisqualified,
-    setDisqualificationReason, currentActivity, activityType, riskScore, MAX_WARNINGS
+    speakingViolations, setSpeakingViolations,
+    setDisqualified, setDisqualificationReason,
+    currentActivity, activityType, MAX_WARNINGS
   } = useProctor();
 
   const examCameraRef = useRef(null);
   const streamRef = useRef(null);
   const examStartTimeMsRef = useRef(0);
   const warningOverlayRef = useRef(null);
-  const proctoringIntervalRef = useRef(null);
-  const snapshotIntervalRef = useRef(null);
-  const randomSnapshotRef = useRef(null);
+  const procIntervalRef = useRef(null);
+  const snapIntervalRef = useRef(null);
+  const randomSnapRef = useRef(null);
+  const liveSyncRef = useRef(null);
   const rtcPeerRef = useRef(null);
   const examInProgressRef = useRef(false);
+  const submitCalledRef = useRef(false); // prevent double-submit
+
+  // Always-fresh refs
+  const answersRef = useRef(candidateAnswers);
+  const qIndexRef = useRef(currentQuestionIndex);
+  const warningsRef = useRef(warnings);
+  const warnTsRef = useRef(warningTimestamps);
+  const snapshotsRef = useRef(proctoringSnapshots);
+  const tabRef = useRef(tabSwitches);
+  const phoneRef = useRef(phoneDetections);
+  const speakRef = useRef(speakingViolations);
+  const timeLeftRef = useRef(timeLeft);
+
+  useEffect(() => { answersRef.current = candidateAnswers; }, [candidateAnswers]);
+  useEffect(() => { qIndexRef.current = currentQuestionIndex; }, [currentQuestionIndex]);
+  useEffect(() => { warningsRef.current = warnings; }, [warnings]);
+  useEffect(() => { warnTsRef.current = warningTimestamps; }, [warningTimestamps]);
+  useEffect(() => { snapshotsRef.current = proctoringSnapshots; }, [proctoringSnapshots]);
+  useEffect(() => { tabRef.current = tabSwitches; }, [tabSwitches]);
+  useEffect(() => { phoneRef.current = phoneDetections; }, [phoneDetections]);
+  useEffect(() => { speakRef.current = speakingViolations; }, [speakingViolations]);
+  useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
 
   const { initFaceDetection, detectFaces, analyzeFaceResult } = useFaceDetection();
-  const { initObjectDetection, startDetection: startObjectDetection, stopDetection: stopObjectDetection } = useObjectDetection({
-    onPhoneDetected: useCallback((objClass) => {
+  const { initObjectDetection, startDetection: startObjDetect, stopDetection: stopObjDetect } = useObjectDetection({
+    onPhoneDetected: useCallback((cls) => {
       if (!examInProgressRef.current) return;
       setPhoneDetections(p => p + 1);
-      handleWarning(`phone_detected: ${objClass}`, true);
+      handleWarning(`phone_detected: ${cls}`, true);
     }, [])
   });
   const { initAudio, startVisualizer, stopAudio } = useAudioDetection({
@@ -60,82 +85,116 @@ export default function ExamPage() {
   });
   const { startRecording, stopRecording } = useExamRecording();
 
+  // ── Mount / unmount ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!candidate || examQuestions.length === 0) { navigate('/'); return; }
     startExam();
     return () => cleanup();
   }, []);
 
-  // Admin command subscription
+  // ── Admin command subscription ───────────────────────────────────────────
+  // Use refs so the callback always calls the latest function (no stale closures)
+  const handleSubmitExamRef = useRef(null);
+  const handleDisqualifyRef = useRef(null);
+  const handleWarningRef = useRef(null);
+
   useEffect(() => {
     if (!candidate?.id) return;
     const unsub = subscribeToCandidate(candidate.id, (updated) => {
-      const cmd = updated.admin_command || updated.adminCommand;;
+      const cmd = (updated.admin_command || updated.adminCommand || '').trim();
       if (!cmd) return;
-      if (cmd === 'force-submit') handleSubmitExam('Admin forced submission');
-      if (cmd === 'disqualify') handleDisqualify('Admin disqualified candidate');
-      if (cmd === 'warn') handleWarning('admin_warning', false);
+      console.log('[ExamPage] admin command received:', cmd);
+
+      // Clear the command immediately so it doesn't re-fire
+      updateCandidateData(candidate.id, { adminCommand: null, admin_command: null }).catch(() => { });
+
+      if (cmd === 'force-submit') handleSubmitExamRef.current?.('Admin forced submission');
+      else if (cmd === 'disqualify') handleDisqualifyRef.current?.('Admin disqualified candidate');
+      else if (cmd === 'warn') handleWarningRef.current?.('admin_warning', false);
+      else if (cmd === 'pause') showNotification('⏸ Exam paused by admin', 'warning');
+      else if (cmd === 'resume') showNotification('▶ Exam resumed by admin', 'success');
     });
     return unsub;
   }, [candidate?.id]);
 
+  // ── Live sync every 3 seconds ────────────────────────────────────────────
+  const startLiveSync = (candidateId) => {
+    liveSyncRef.current = setInterval(async () => {
+      if (!examInProgressRef.current || !candidateId) return;
+      try {
+        await updateCandidateData(candidateId, {
+          currentQuestionIndex: qIndexRef.current,
+          totalQuestions: examQuestions.length,
+          selectedAnswer: answersRef.current[qIndexRef.current] ?? null,
+          warningCount: warningsRef.current,
+          tabSwitches: tabRef.current,
+          phoneDetections: phoneRef.current,
+          speakingViolations: speakRef.current,
+          warningTimestamps: warnTsRef.current,
+        });
+      } catch (e) { console.warn('Live sync error:', e); }
+    }, LIVE_SYNC_INTERVAL);
+  };
+
+  // ── Start exam ────────────────────────────────────────────────────────────
   const startExam = async () => {
     try {
-      // Request fullscreen
       try { await document.documentElement.requestFullscreen(); } catch { }
 
-      // Open camera
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
       if (examCameraRef.current) examCameraRef.current.srcObject = stream;
 
-      // Device fingerprint
       const fingerprint = `${navigator.userAgent}|${screen.width}|${screen.height}|${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
-      const startTime = new Date().toISOString();
+      const startIso = new Date().toISOString();
       const startMs = Date.now();
+
       examStartTimeMsRef.current = startMs;
       examInProgressRef.current = true;
+      submitCalledRef.current = false;
       setExamInProgress(true);
       setExamStartTimeMs(startMs);
 
+      // Initial DB write — everything the live card needs
       await updateCandidateData(candidate.id, {
         status: 'in-progress',
-        exam_start_time: startTime,
+        exam_start_time: startIso,
         deviceFingerprint: fingerprint,
         adminCommand: null,
+        admin_command: null,
         warningCount: 0,
-        currentQuestionIndex: 0
+        currentQuestionIndex: 0,
+        totalQuestions: examQuestions.length,
+        selectedAnswer: null,
+        tabSwitches: 0,
+        phoneDetections: 0,
+        speakingViolations: 0,
+        warningTimestamps: [],
+        proctoringSnapshots: [],
       });
+
       await updateToken(candidate.tokenId, { status: 'used' });
 
-      // Init AI/Detection
       await initFaceDetection();
       await initObjectDetection();
 
-      // Audio
       const audioStream = new MediaStream(stream.getAudioTracks());
       await initAudio(audioStream);
-
-      // Recording
       await startRecording(stream);
 
-      // Proctoring loop (face detection)
-      proctoringIntervalRef.current = setInterval(() => runProctoringCheck(), 500);
-
-      // Periodic snapshot every 30s
-      snapshotIntervalRef.current = setInterval(() => takeSnapshot('periodic'), SNAPSHOT_INTERVAL);
+      procIntervalRef.current = setInterval(() => runProctoringCheck(), 500);
+      snapIntervalRef.current = setInterval(() => takeSnapshot('periodic'), SNAPSHOT_INTERVAL);
       scheduleRandomSnapshot();
+      startLiveSync(candidate.id);
 
-      // Object detection
-      if (examCameraRef.current) startObjectDetection(examCameraRef.current);
-
-      // Start timer
+      if (examCameraRef.current) startObjDetect(examCameraRef.current);
       startTimer(() => handleSubmitExam('Time expired'));
 
-      // Setup WebRTC for live monitoring
+      // Take an immediate snapshot so live card shows something right away
+      setTimeout(() => takeSnapshot('exam_start'), 2500);
+
       setupWebRTC(stream);
 
-      // Setup proctoring event listeners
       document.addEventListener('visibilitychange', handleVisibilityChange);
       window.addEventListener('blur', handleWindowBlur);
       document.body.addEventListener('mouseleave', handleMouseLeave);
@@ -149,259 +208,258 @@ export default function ExamPage() {
     }
   };
 
+  // ── WebRTC ────────────────────────────────────────────────────────────────
   const setupWebRTC = async (stream) => {
     try {
       if (rtcPeerRef.current) rtcPeerRef.current.close();
-
       rtcPeerRef.current = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ]
       });
-
-      stream.getTracks().forEach(track => rtcPeerRef.current.addTrack(track, stream));
-
+      stream.getTracks().forEach(t => rtcPeerRef.current.addTrack(t, stream));
       const offer = await rtcPeerRef.current.createOffer();
       await rtcPeerRef.current.setLocalDescription(offer);
-
-      // Wait a moment for ICE gathering to complete before broadcasting the offer
-      await new Promise(resolve => {
-        if (rtcPeerRef.current.iceGatheringState === 'complete') resolve();
+      await new Promise(res => {
+        if (rtcPeerRef.current.iceGatheringState === 'complete') res();
         else {
-          setTimeout(resolve, 1500); // Wait max 1.5s for ICE candidates
+          setTimeout(res, 2000);
           rtcPeerRef.current.onicegatheringstatechange = () => {
-            if (rtcPeerRef.current.iceGatheringState === 'complete') resolve();
+            if (rtcPeerRef.current?.iceGatheringState === 'complete') res();
           };
         }
       });
-
-      // Broadcast our offer
-      await saveWebRTCOffer(candidate.id, { type: rtcPeerRef.current.localDescription.type, sdp: rtcPeerRef.current.localDescription.sdp });
-
-      // Listen for the answer from admin
+      await saveWebRTCOffer(candidate.id, {
+        type: rtcPeerRef.current.localDescription.type,
+        sdp: rtcPeerRef.current.localDescription.sdp,
+      });
       subscribeToWebRTCAnswer(candidate.id, async ({ answer }) => {
-        if (answer && rtcPeerRef.current && rtcPeerRef.current.signalingState !== 'closed' && !rtcPeerRef.current.remoteDescription) {
-          try {
-            await rtcPeerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-          } catch (e) { console.warn('Answer set error:', e); }
+        if (answer && rtcPeerRef.current &&
+          rtcPeerRef.current.signalingState !== 'closed' &&
+          !rtcPeerRef.current.remoteDescription) {
+          try { await rtcPeerRef.current.setRemoteDescription(new RTCSessionDescription(answer)); }
+          catch (e) { console.warn('WebRTC answer error:', e); }
         }
       });
     } catch (e) {
-      console.warn('WebRTC setup failed (will use snapshot fallback):', e);
+      console.warn('WebRTC failed (snapshot fallback active):', e);
     }
   };
 
   useEffect(() => {
     if (!candidate?.id) return;
-    const unsubReq = subscribeToWebRTCRequest(candidate.id, () => {
-      if (streamRef.current) {
-        setupWebRTC(streamRef.current);
-      }
+    const unsub = subscribeToWebRTCRequest(candidate.id, () => {
+      if (streamRef.current) setupWebRTC(streamRef.current);
     });
-    return unsubReq;
+    return unsub;
   }, [candidate?.id]);
 
+  // ── Proctoring ────────────────────────────────────────────────────────────
   const runProctoringCheck = () => {
     if (!examCameraRef.current || !examInProgressRef.current) return;
     const result = detectFaces(examCameraRef.current);
     if (!result) return;
     const { faceCount, isLookingAway } = analyzeFaceResult(result);
-
-    if (faceCount === 0) {
-      handleWarning('face_not_visible', true);
-    } else if (faceCount > 1) {
-      handleWarning('multiple_faces_detected', true);
-    } else if (isLookingAway) {
-      handleWarning('looking_away', false);
-    }
+    if (faceCount === 0) handleWarning('face_not_visible', true);
+    else if (faceCount > 1) handleWarning('multiple_faces_detected', true);
+    else if (isLookingAway) handleWarning('looking_away', false);
   };
 
   const handleWarning = useCallback((reason, takeSnap = false) => {
     if (!examInProgressRef.current) return;
-    addWarning(reason, examStartTimeMsRef.current, (disqReason) => handleDisqualify(disqReason));
+    addWarning(reason, examStartTimeMsRef.current, (r) => handleDisqualifyRef.current?.(r));
     if (takeSnap) takeSnapshot(reason);
-    showWarningOverlay(reason.replace(/_/g, ' '));
-
-    const newWarning = { time: Math.floor((Date.now() - examStartTimeMsRef.current) / 1000), reason };
-
-    updateCandidateData(candidate.id, {
-      warningCount: warnings + 1,
-      warningTimestamps: [...(candidate.warningTimestamps || []), newWarning]
-    }).catch(() => { });
-  }, [warnings, candidate]);
-
-  const showWarningOverlay = (text) => {
-    if (warningOverlayRef.current) {
-      warningOverlayRef.current.show(text);
-    }
-  };
+    if (warningOverlayRef.current) warningOverlayRef.current.show(reason.replace(/_/g, ' '));
+  }, []);
 
   const takeSnapshot = async (reason) => {
     if (!examCameraRef.current || !candidate) return;
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = examCameraRef.current.videoWidth || 320;
-      canvas.height = examCameraRef.current.videoHeight || 240;
-      canvas.getContext('2d').drawImage(examCameraRef.current, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-      const result = await uploadSnapshot(dataUrl, candidate.id, reason);
-      if (result) {
-        const snapObj = { url: result.url, path: result.path, reason, timestamp: new Date().toISOString() };
-        addSnapshot(snapObj);
-
-        // Supabase JSONB arrays replace entirely, so we append to our local context array
-        await updateCandidateData(candidate.id, {
-          proctoringSnapshots: [...(candidate.proctoringSnapshots || []), snapObj]
-        });
+      const c = document.createElement('canvas');
+      c.width = examCameraRef.current.videoWidth || 320;
+      c.height = examCameraRef.current.videoHeight || 240;
+      c.getContext('2d').drawImage(examCameraRef.current, 0, 0);
+      const dataUrl = c.toDataURL('image/jpeg', 0.7);
+      const res = await uploadSnapshot(dataUrl, candidate.id, reason);
+      if (res) {
+        const snap = { url: res.url, path: res.path, reason, timestamp: new Date().toISOString() };
+        addSnapshot(snap);
+        const updated = [...(snapshotsRef.current || []), snap];
+        await updateCandidateData(candidate.id, { proctoringSnapshots: updated });
       }
-    } catch (e) {
-      console.error('Snapshot error:', e);
-    }
+    } catch (e) { console.error('Snapshot error:', e); }
   };
 
   const scheduleRandomSnapshot = () => {
     const delay = RANDOM_SNAPSHOT_MIN + Math.random() * (RANDOM_SNAPSHOT_MAX - RANDOM_SNAPSHOT_MIN);
-    randomSnapshotRef.current = setTimeout(() => {
-      if (examInProgressRef.current) {
-        takeSnapshot('random_check');
-        scheduleRandomSnapshot();
-      }
+    randomSnapRef.current = setTimeout(() => {
+      if (examInProgressRef.current) { takeSnapshot('random_check'); scheduleRandomSnapshot(); }
     }, delay);
   };
 
+  // ── Event handlers ────────────────────────────────────────────────────────
   const handleVisibilityChange = useCallback(() => {
     if (document.visibilityState === 'hidden' && examInProgressRef.current) {
       setTabSwitches(t => t + 1);
       handleWarning('tab_switch', false);
     }
   }, []);
-
   const handleWindowBlur = useCallback(() => {
     if (examInProgressRef.current) handleWarning('window_blur', false);
   }, []);
-
   const handleMouseLeave = useCallback(() => {
-    if (examInProgressRef.current) {
+    if (examInProgressRef.current)
       updateCandidateData(candidate?.id, { cursorStatus: 'out' }).catch(() => { });
-    }
   }, [candidate?.id]);
-
   const handleMouseEnter = useCallback(() => {
     if (candidate?.id) updateCandidateData(candidate.id, { cursorStatus: 'in' }).catch(() => { });
   }, [candidate?.id]);
-
   const handleFullscreenChange = useCallback(() => {
-    if (!document.fullscreenElement && examInProgressRef.current) {
+    if (!document.fullscreenElement && examInProgressRef.current)
       handleWarning('fullscreen_exited', false);
-    }
   }, []);
 
-  const handleDisqualify = async (reason) => {
-    if (!examInProgressRef.current) return;
+  // ── Finalize (shared by submit + disqualify) ──────────────────────────────
+  const finalizeExam = async () => {
     examInProgressRef.current = false;
     setExamInProgress(false);
     stopTimer();
+    if (liveSyncRef.current) clearInterval(liveSyncRef.current);
 
-    // Stop recording & upload
-    let recordingUrl = null;
+    let recordingUrl = null, recordingPath = null;
     try {
       const blob = await stopRecording();
-      if (blob) {
+      if (blob && blob.size > 0) {
         const res = await uploadRecording(blob, candidate.id);
-        if (res) recordingUrl = res.url;
+        if (res) { recordingUrl = res.url; recordingPath = res.path; }
       }
     } catch (e) { console.error('Recording upload error:', e); }
 
     cleanup();
+    return { recordingUrl, recordingPath };
+  };
+
+  // ── Disqualify ────────────────────────────────────────────────────────────
+  const handleDisqualify = async (reason) => {
+    if (!examInProgressRef.current) return;
+    const { recordingUrl, recordingPath } = await finalizeExam();
 
     setDisqualified(true);
     setDisqualificationReason(reason);
 
-    await updateCandidateData(candidate.id, {
-      status: 'disqualified',
-      disqualificationReason: reason,
-      examEndTime: new Date().toISOString(),
-      recordingUrl: recordingUrl || null,
-      warningTimestamps,
-      proctoringSnapshots,
-    });
+    const ans = answersRef.current;
+    const score = examQuestions.length > 0
+      ? Math.round(examQuestions.filter((q, i) => ans[i] === q.correctAnswer).length / examQuestions.length * 100)
+      : 0;
+
+    try {
+      await updateCandidateData(candidate.id, {
+        status: 'disqualified',
+        disqualificationReason: reason,
+        examEndTime: new Date().toISOString(),
+        score,
+        examResults: { questions: examQuestions, answers: ans },
+        recordingUrl: recordingUrl || null,
+        recordingPath: recordingPath || null,
+        warningTimestamps: warnTsRef.current,
+        proctoringSnapshots: snapshotsRef.current,
+        warningCount: warningsRef.current,
+        tabSwitches: tabRef.current,
+        phoneDetections: phoneRef.current,
+        speakingViolations: speakRef.current,
+        totalQuestions: examQuestions.length,
+      });
+    } catch (e) { console.error('Disqualify DB error:', e); }
 
     setCandidate(prev => ({ ...prev, status: 'disqualified', disqualificationReason: reason }));
     navigate('/exam/complete');
   };
 
+  // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmitExam = async (reason = 'Candidate submitted') => {
-    if (!examInProgressRef.current) return;
-    examInProgressRef.current = false;
-    setExamInProgress(false);
-    stopTimer();
+    // Guard: prevent double-submit from timer + admin command arriving at same time
+    if (!examInProgressRef.current || submitCalledRef.current) return;
+    submitCalledRef.current = true;
 
-    // Stop recording & upload
-    let recordingUrl = null;
-    try {
-      const blob = await stopRecording();
-      if (blob) {
-        const res = await uploadRecording(blob, candidate.id);
-        if (res) recordingUrl = res.url;
-      }
-    } catch (e) { console.error('Recording upload error:', e); }
+    console.log('[ExamPage] submitting exam, reason:', reason);
 
-    cleanup();
+    const { recordingUrl, recordingPath } = await finalizeExam();
 
-    // Calculate score
+    const ans = answersRef.current;
     const total = examQuestions.length;
-    const correct = examQuestions.filter((q, i) => candidateAnswers[i] === q.correctAnswer).length;
+    const correct = examQuestions.filter((q, i) => ans[i] === q.correctAnswer).length;
     const score = total > 0 ? Math.round((correct / total) * 100) : 0;
 
-    await setCandidateData(candidate.id, {
-      status: 'completed',
-      score,
-      examEndTime: new Date().toISOString(),
-      examResults: { questions: examQuestions, answers: candidateAnswers },
-      recordingUrl: recordingUrl || null,
-      warningTimestamps,
-      proctoringSnapshots,
-    });
+    console.log('[ExamPage] score:', score, 'correct:', correct, 'total:', total);
+
+    try {
+      // Use updateCandidateData (simpler UPDATE) rather than setCandidateData
+      // to avoid any upsert issues
+      const ok = await updateCandidateData(candidate.id, {
+        status: 'completed',
+        score,
+        examEndTime: new Date().toISOString(),
+        examResults: { questions: examQuestions, answers: ans },
+        recordingUrl: recordingUrl || null,
+        recordingPath: recordingPath || null,
+        warningTimestamps: warnTsRef.current,
+        proctoringSnapshots: snapshotsRef.current,
+        warningCount: warningsRef.current,
+        tabSwitches: tabRef.current,
+        phoneDetections: phoneRef.current,
+        speakingViolations: speakRef.current,
+        totalQuestions: examQuestions.length,
+        adminCommand: null,
+        admin_command: null,
+      });
+      console.log('[ExamPage] DB update result:', ok);
+    } catch (e) {
+      console.error('Submit DB error:', e);
+    }
 
     setCandidate(prev => ({ ...prev, status: 'completed' }));
     navigate('/exam/complete');
   };
 
+  // Keep refs pointing to latest function versions (prevents stale closures in admin command listener)
+  useEffect(() => { handleSubmitExamRef.current = handleSubmitExam; });
+  useEffect(() => { handleDisqualifyRef.current = handleDisqualify; });
+  useEffect(() => { handleWarningRef.current = handleWarning; });
+
+  // ── Navigation ────────────────────────────────────────────────────────────
   const handleNavigation = (direction) => {
-    if (direction === 'next' && currentQuestionIndex < examQuestions.length - 1) {
-      const next = currentQuestionIndex + 1;
-      setCurrentQuestionIndex(next);
-
-      // Tell Supabase the student moved forward!
-      updateCandidateData(candidate.id, {
-        current_question_index: next,
-        selectedAnswer: candidateAnswers[next] ?? null
-      }).catch(() => { });
-
-    } else if (direction === 'prev' && currentQuestionIndex > sessionStartIndex) {
-      const prev = currentQuestionIndex - 1;
-      setCurrentQuestionIndex(prev);
-
-      // Tell Supabase the student moved backward!
-      updateCandidateData(candidate.id, {
-        current_question_index: prev,
-        selectedAnswer: candidateAnswers[prev] ?? null
-      }).catch(() => { });
-    }
+    let next = qIndexRef.current;
+    if (direction === 'next' && next < examQuestions.length - 1) next += 1;
+    else if (direction === 'prev' && next > sessionStartIndex) next -= 1;
+    else return;
+    setCurrentQuestionIndex(next);
+    // Immediate push so live card updates right away
+    updateCandidateData(candidate.id, {
+      currentQuestionIndex: next,
+      totalQuestions: examQuestions.length,
+      selectedAnswer: answersRef.current[next] ?? null,
+    }).catch(() => { });
   };
-
 
   const handleOptionSelect = (optionNumber) => {
-    const updated = [...candidateAnswers];
+    const updated = [...answersRef.current];
     updated[currentQuestionIndex] = optionNumber;
     setCandidateAnswers(updated);
-    updateCandidateData(candidate.id, { selectedAnswer: optionNumber }).catch(() => { });
+    updateCandidateData(candidate.id, {
+      selectedAnswer: optionNumber,
+      currentQuestionIndex: qIndexRef.current,
+    }).catch(() => { });
   };
 
+  // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanup = () => {
-    stopObjectDetection();
+    stopObjDetect();
     stopAudio();
-    if (proctoringIntervalRef.current) clearInterval(proctoringIntervalRef.current);
-    if (snapshotIntervalRef.current) clearInterval(snapshotIntervalRef.current);
-    if (randomSnapshotRef.current) clearTimeout(randomSnapshotRef.current);
+    if (procIntervalRef.current) clearInterval(procIntervalRef.current);
+    if (snapIntervalRef.current) clearInterval(snapIntervalRef.current);
+    if (randomSnapRef.current) clearTimeout(randomSnapRef.current);
+    if (liveSyncRef.current) clearInterval(liveSyncRef.current);
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     if (rtcPeerRef.current) rtcPeerRef.current.close();
     document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -415,7 +473,7 @@ export default function ExamPage() {
   if (!candidate || examQuestions.length === 0) return null;
 
   const currentQuestion = examQuestions[currentQuestionIndex];
-  const progress = examQuestions.length > 0 ? ((currentQuestionIndex + 1) / examQuestions.length) * 100 : 0;
+  const progress = ((currentQuestionIndex + 1) / examQuestions.length) * 100;
   const minutes = Math.floor(timeLeft / 60).toString().padStart(2, '0');
   const seconds = (timeLeft % 60).toString().padStart(2, '0');
   const roleDisplay = candidate.role?.charAt(0).toUpperCase() + candidate.role?.slice(1);
@@ -436,9 +494,10 @@ export default function ExamPage() {
             <div className="exam-progress-container">
               <div className="exam-progress-bar" id="progress-fill" style={{ width: `${progress}%` }}></div>
             </div>
-            <div className="exam-progress-text" id="progress-text">Question {currentQuestionIndex + 1} of {examQuestions.length}</div>
+            <div className="exam-progress-text" id="progress-text">
+              Question {currentQuestionIndex + 1} of {examQuestions.length}
+            </div>
           </div>
-
           <div className="exam-body">
             <QuestionPanel
               question={currentQuestion}
@@ -452,7 +511,6 @@ export default function ExamPage() {
               canGoNext={currentQuestionIndex < examQuestions.length - 1}
               onSubmit={() => handleSubmitExam('Candidate submitted')}
             />
-
             <ProctorPanel
               videoRef={examCameraRef}
               warnings={warnings}
