@@ -12,7 +12,7 @@ async function extractQuestionsFromPdf(file) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    
+
     // Group text items by their Y position to reconstruct real lines
     // PDF coordinates go bottom-to-top, so we sort Ys descending
     const lines = {};
@@ -26,36 +26,36 @@ async function extractQuestionsFromPdf(file) {
       fullText += lines[y].join(' ').trim() + '\n';
     }
   }
-  
+
   console.log('Extracted PDF text (first 800 chars):\n', fullText.substring(0, 800));
-  
+
   const questions = [];
   // Split on question number at start of line
   const blocks = fullText.split(/(?:^|\n)\s*\d+\.\s+/);
-  
+
   for (let i = 1; i < blocks.length; i++) {
     const block = blocks[i].trim();
     if (!block) continue;
-    
+
     // Find where the first option starts
     const firstOptionMatch = block.match(/(?:\n|\s)[a-d]\)\s/i);
     if (!firstOptionMatch) continue;
-    
+
     const text = block.substring(0, firstOptionMatch.index).trim().replace(/\n/g, ' ');
     if (!text) continue;
-    
+
     // Get all options
     const opts = [...block.matchAll(/(?:^|\n|\s)[a-d]\)\s*([^\n\r]+)/gi)].map(m => m[1].trim()).filter(Boolean);
     if (opts.length < 2) continue;
-    
+
     // Get the answer
     const ansMatch = block.match(/ANSWER:\s*([a-d])/i);
     const ansLetter = ansMatch ? ansMatch[1].toLowerCase() : 'a';
     const correctAnswer = { a: 1, b: 2, c: 3, d: 4 }[ansLetter] || 1;
-    
+
     questions.push({ text, options: opts, correctAnswer });
   }
-  
+
   console.log(`Parsed ${questions.length} questions from PDF`);
   return questions;
 }
@@ -135,17 +135,16 @@ export default function QuestionManagement() {
       setMqText(''); setMqOptions(['', '', '', '']); setMqCorrect(1);
     }
   };
-
   const handleDeletePack = async (packId) => {
     if (!window.confirm('Delete this question pack?')) return;
-    await deletePack(packId);
-    setPacks(prev => prev.filter(p => p.id !== packId));
-    setExpandedPacks(prev => {
-      const s = new Set(prev);
-      s.delete(packId);
-      return s;
-    });
-    showNotification('Pack deleted.', 'success');
+    const success = await deletePack(packId);
+    if (success) {
+      // Force refresh from database
+      await loadPacks();
+      showNotification('Pack deleted.', 'success');
+    } else {
+      showNotification('Delete failed.', 'error');
+    }
   };
 
   const toggleExpand = (packId) => {
@@ -261,59 +260,59 @@ export default function QuestionManagement() {
           {packs.length === 0
             ? <p>No question packs found.</p>
             : packs.map(pack => {
-                console.log("Rendering pack in UI:", pack);
-                return (
-              <div key={pack.id} className="question-pack-item">
-                <div className="question-pack-header">
-                  <h4>{pack.fileName || pack.file_name || "Unnamed Pack"}</h4>
-                  <span className={`role-badge role-${pack.role}`}>{pack.role}{pack.subRole ? ` (${pack.subRole})` : ''}</span>
-                </div>
-                <div className="question-pack-info">{pack.questions?.length || 0} questions</div>
-                <div className="question-pack-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
-                  <button 
-                    className="btn btn-secondary btn-sm" 
-                    onClick={() => toggleExpand(pack.id)}
-                    style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db' }}
-                  >
-                    <i className={`fas fa-chevron-${expandedPacks.has(pack.id) ? 'up' : 'down'}`}></i>{' '}
-                    {expandedPacks.has(pack.id) ? 'Hide Questions' : 'View Questions'}
-                  </button>
-                  <button className="btn btn-danger btn-sm delete-pack-btn" data-id={pack.id} onClick={() => handleDeletePack(pack.id)}>
-                    <i className="fas fa-trash"></i> Delete
-                  </button>
-                </div>
-                
-                {/* Expanded Questions View */}
-                {expandedPacks.has(pack.id) && pack.questions && pack.questions.length > 0 && (
-                  <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px dashed #e5e7eb' }}>
-                    {pack.questions.map((q, i) => (
-                      <div key={i} style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f9fafb', borderRadius: '6px' }}>
-                        <p style={{ fontWeight: '600', margin: '0 0 8px 0', color: '#111827' }}>
-                          {i + 1}. {q.text}
-                        </p>
-                        <ul style={{ listStyleType: 'none', padding: 0, margin: 0, fontSize: '0.9rem' }}>
-                          {q.options.map((opt, optIndex) => (
-                            <li 
-                              key={optIndex} 
-                              style={{ 
-                                padding: '4px 8px', 
-                                margin: '4px 0',
-                                borderRadius: '4px',
-                                backgroundColor: q.correctAnswer === (optIndex + 1) ? '#dcfce7' : 'transparent',
-                                border: q.correctAnswer === (optIndex + 1) ? '1px solid #bbf7d0' : '1px solid transparent',
-                                color: q.correctAnswer === (optIndex + 1) ? '#166534' : '#4b5563'
-                              }}
-                            >
-                              {String.fromCharCode(97 + optIndex)}) {opt}
-                              {q.correctAnswer === (optIndex + 1) && <span style={{ marginLeft: '8px', fontSize: '0.8rem', fontWeight: 'bold' }}>✓</span>}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
+              console.log("Rendering pack in UI:", pack);
+              return (
+                <div key={pack.id} className="question-pack-item">
+                  <div className="question-pack-header">
+                    <h4>{pack.fileName || pack.file_name || "Unnamed Pack"}</h4>
+                    <span className={`role-badge role-${pack.role}`}>{pack.role}{pack.subRole ? ` (${pack.subRole})` : ''}</span>
                   </div>
-                )}
-              </div>
+                  <div className="question-pack-info">{pack.questions?.length || 0} questions</div>
+                  <div className="question-pack-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => toggleExpand(pack.id)}
+                      style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db' }}
+                    >
+                      <i className={`fas fa-chevron-${expandedPacks.has(pack.id) ? 'up' : 'down'}`}></i>{' '}
+                      {expandedPacks.has(pack.id) ? 'Hide Questions' : 'View Questions'}
+                    </button>
+                    <button className="btn btn-danger btn-sm delete-pack-btn" data-id={pack.id} onClick={() => handleDeletePack(pack.id)}>
+                      <i className="fas fa-trash"></i> Delete
+                    </button>
+                  </div>
+
+                  {/* Expanded Questions View */}
+                  {expandedPacks.has(pack.id) && pack.questions && pack.questions.length > 0 && (
+                    <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px dashed #e5e7eb' }}>
+                      {pack.questions.map((q, i) => (
+                        <div key={i} style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f9fafb', borderRadius: '6px' }}>
+                          <p style={{ fontWeight: '600', margin: '0 0 8px 0', color: '#111827' }}>
+                            {i + 1}. {q.text}
+                          </p>
+                          <ul style={{ listStyleType: 'none', padding: 0, margin: 0, fontSize: '0.9rem' }}>
+                            {q.options.map((opt, optIndex) => (
+                              <li
+                                key={optIndex}
+                                style={{
+                                  padding: '4px 8px',
+                                  margin: '4px 0',
+                                  borderRadius: '4px',
+                                  backgroundColor: q.correctAnswer === (optIndex + 1) ? '#dcfce7' : 'transparent',
+                                  border: q.correctAnswer === (optIndex + 1) ? '1px solid #bbf7d0' : '1px solid transparent',
+                                  color: q.correctAnswer === (optIndex + 1) ? '#166534' : '#4b5563'
+                                }}
+                              >
+                                {String.fromCharCode(97 + optIndex)}) {opt}
+                                {q.correctAnswer === (optIndex + 1) && <span style={{ marginLeft: '8px', fontSize: '0.8rem', fontWeight: 'bold' }}>✓</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             })
           }

@@ -38,6 +38,7 @@ export default function CandidatesTable({ candidates, onViewCandidate }) {
     setSelectedIds([]);
     setSelectAll(false);
     showNotification('Candidates deleted.', 'success');
+    window.location.reload();
   };
 
   const handleResendEmail = async (candidate) => {
@@ -171,7 +172,7 @@ export default function CandidatesTable({ candidates, onViewCandidate }) {
                   </button>
                 </td>
                 <td>
-                  <button className="btn btn-danger btn-sm" onClick={() => deleteCandidates([c.id]).then(() => showNotification('Deleted', 'success'))}>
+                  <button className="btn btn-danger btn-sm" onClick={() => deleteCandidates([c.id]).then(() => { showNotification('Deleted', 'success'); window.location.reload(); })}>
                     <i className="fas fa-trash"></i>
                   </button>
                 </td>
