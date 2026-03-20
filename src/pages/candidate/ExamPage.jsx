@@ -369,11 +369,25 @@ export default function ExamPage() {
     if (direction === 'next' && currentQuestionIndex < examQuestions.length - 1) {
       const next = currentQuestionIndex + 1;
       setCurrentQuestionIndex(next);
-      updateCandidateData(candidate.id, { currentQuestionIndex: next, selectedAnswer: candidateAnswers[next] ?? null }).catch(() => { });
+
+      // Tell Supabase the student moved forward!
+      updateCandidateData(candidate.id, {
+        current_question_index: next,
+        selectedAnswer: candidateAnswers[next] ?? null
+      }).catch(() => { });
+
     } else if (direction === 'prev' && currentQuestionIndex > sessionStartIndex) {
-      setCurrentQuestionIndex(p => p - 1);
+      const prev = currentQuestionIndex - 1;
+      setCurrentQuestionIndex(prev);
+
+      // Tell Supabase the student moved backward!
+      updateCandidateData(candidate.id, {
+        current_question_index: prev,
+        selectedAnswer: candidateAnswers[prev] ?? null
+      }).catch(() => { });
     }
   };
+
 
   const handleOptionSelect = (optionNumber) => {
     const updated = [...candidateAnswers];
