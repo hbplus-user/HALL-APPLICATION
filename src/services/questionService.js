@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 
 const TABLE = 'question_packs';
-const BUCKET = 'exam_recordings';
+const BUCKET = 'proctoring';
 
 // Helper: delete a file from Supabase Storage by its path
 const deleteStorageFile = async (storagePath) => {

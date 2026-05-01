@@ -18,6 +18,16 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
+    const magicEmail = searchParams.get('email');
+    const magicToken = searchParams.get('token');
+
+    if (magicEmail && magicToken && !isAdminMode) {
+      setEmail(magicEmail);
+      setPassword(magicToken);
+      setTimeout(() => doLogin(magicEmail, magicToken), 300);
+      return;
+    }
+
     if (currentAdmin) {
       if (!currentAdmin.email?.endsWith('@hbplus.fit')) {
         showNotification('Access Denied: Must use an @hbplus.fit email address', 'error');
@@ -26,16 +36,8 @@ export default function LoginPage() {
         navigate('/admin');
         showNotification('Admin login successful!', 'success');
       }
-      return;
     }
-    const magicEmail = searchParams.get('email');
-    const magicToken = searchParams.get('token');
-    if (magicEmail && magicToken && !isAdminMode) {
-      setEmail(magicEmail);
-      setPassword(magicToken);
-      setTimeout(() => doLogin(magicEmail, magicToken), 300);
-    }
-  }, [currentAdmin]);
+  }, [currentAdmin, searchParams]);
 
   const toggleMode = (e) => {
     e.preventDefault();

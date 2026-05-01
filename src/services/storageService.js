@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-const BUCKET = 'exam_recordings';
+const BUCKET = 'proctoring';
 
 // Helper to convert base64 data url to Blob
 const dataUrlToBlob = async (dataUrl) => {

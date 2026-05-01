@@ -10,19 +10,30 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log('AuthProvider: Initializing...');
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setCurrentAdmin(session?.user ?? null);
-      setLoading(false);
-    });
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        console.log('AuthProvider: Session retrieved:', session?.user?.email || 'No session');
+        setCurrentAdmin(session?.user ?? null);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('AuthProvider: Error getting session:', err);
+        setLoading(false);
+      });
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('AuthProvider: Auth state change:', _event, session?.user?.email || 'No session');
       setCurrentAdmin(session?.user ?? null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      console.log('AuthProvider: Unsubscribing...');
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loginWithGoogle = async () => {
