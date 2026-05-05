@@ -69,5 +69,29 @@ export const useExamRecording = () => {
     });
   }, []);
 
-  return { startRecording, stopRecording, startScreenRecording, stopScreenRecording };
+  const recordClip = useCallback((stream, durationMs = 5000) => {
+    return new Promise((resolve) => {
+      if (!stream) return resolve(null);
+      try {
+        const chunks = [];
+        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp8' });
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
+        recorder.onstop = () => {
+          if (chunks.length === 0) resolve(null);
+          else resolve(new Blob(chunks, { type: 'video/webm' }));
+        };
+        recorder.start();
+        setTimeout(() => {
+          if (recorder.state !== 'inactive') recorder.stop();
+        }, durationMs);
+      } catch (e) {
+        console.error('Clip recording failed:', e);
+        resolve(null);
+      }
+    });
+  }, []);
+
+  return { startRecording, stopRecording, startScreenRecording, stopScreenRecording, recordClip };
 };

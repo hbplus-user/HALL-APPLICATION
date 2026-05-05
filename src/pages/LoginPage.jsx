@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useExam } from '../contexts/ExamContext';
 import { findToken, updateToken } from '../services/tokenService';
-import { findCandidateByEmail, setCandidateData, updateCandidateData } from '../services/candidateService';
+import { findCandidateByEmail, findCandidateByToken, setCandidateData, updateCandidateData } from '../services/candidateService';
 import { showNotification } from '../components/common/NotificationSystem';
 import { showLoader, hideLoader } from '../components/common/LoadingOverlay';
 
@@ -97,9 +97,27 @@ export default function LoginPage() {
         return;
       }
 
-      // 2. ALWAYS create a brand new candidate row for each valid token use.
-      //    This ensures previous exam data is never overwritten and each
-      //    attempt has its own record in the admin dashboard.
+      // 2. Check if a candidate row already exists for this exact token
+      //    (covers the case where user clicks login multiple times)
+      const existingForToken = await findCandidateByToken(useEmail, token.id);
+      if (existingForToken) {
+        // Reuse the existing row — do NOT create another one
+        resetExam();
+        setCandidate(existingForToken);
+        navigate(existingForToken.status === 'in-progress' ? '/exam/instructions' : '/exam/photo');
+        return;
+      }
+
+      // 3. Also clean up any orphaned in-progress sessions from a DIFFERENT token
+      const staleSession = await findCandidateByEmail(useEmail);
+      if (staleSession && staleSession.status === 'in-progress' && staleSession.tokenId !== token.id) {
+        await updateCandidateData(staleSession.id, {
+          status: 'completed',
+          examEndTime: new Date().toISOString(),
+        });
+      }
+
+      // 4. First-time login for this token — create one new candidate row
       const candidate = await setCandidateData(null, {
         email: useEmail,
         name: useEmail.split('@')[0],
@@ -115,7 +133,7 @@ export default function LoginPage() {
         return;
       }
 
-      // 3. Proceed to exam
+      // Proceed to exam
       resetExam();
       setCandidate(candidate);
       navigate('/exam/photo');

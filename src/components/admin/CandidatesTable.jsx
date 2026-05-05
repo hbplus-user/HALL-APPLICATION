@@ -119,9 +119,9 @@ export default function CandidatesTable({ candidates, onViewCandidate }) {
               <th>Role</th>
               <th>Status</th>
               <th>Score</th>
-              <th>Actions</th>
-              <th>Email</th>
-              <th>Delete</th>
+              <th style={{ width: 180 }}>Actions</th>
+              <th style={{ width: 60, textAlign: 'center' }}>Email</th>
+              <th style={{ width: 60, textAlign: 'center' }}>Delete</th>
             </tr>
           </thead>
           <tbody id="candidates-table-body">
@@ -154,15 +154,27 @@ export default function CandidatesTable({ candidates, onViewCandidate }) {
                 <td>{getStatusBadge(c.status)}</td>
                 <td>{c.score !== undefined ? `${c.score}%` : '—'}</td>
                 <td>
-                  <button className="btn btn-primary btn-sm view-candidate" data-id={c.id} onClick={() => onViewCandidate(c)}>
-                    View
-                  </button>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap' }}>
+                    <button className="btn btn-primary btn-sm" onClick={() => onViewCandidate(c)}>View</button>
+                    <button className="btn btn-success btn-sm" title="Qualify" onClick={async () => {
+                      const { updateCandidateData } = await import('../../services/candidateService');
+                      await updateCandidateData(c.id, { status: 'qualified' });
+                      showNotification('Qualified', 'success');
+                      window.location.reload();
+                    }}>Pass</button>
+                    <button className="btn btn-danger btn-sm" title="Disqualify" onClick={async () => {
+                      const { updateCandidateData } = await import('../../services/candidateService');
+                      await updateCandidateData(c.id, { status: 'disqualified' });
+                      showNotification('Disqualified', 'success');
+                      window.location.reload();
+                    }}>Fail</button>
+                  </div>
                 </td>
-                <td>
+                <td style={{ textAlign: 'center' }}>
                   <button
                     className="btn btn-sm"
                     title={`Resend exam email to ${c.email}`}
-                    style={{ background: '#4361ee', color: '#fff', border: 'none' }}
+                    style={{ background: '#4361ee', color: '#fff', border: 'none', width: 32, height: 32, padding: 0, borderRadius: 6 }}
                     disabled={sendingEmail === c.id}
                     onClick={() => handleResendEmail(c)}
                   >
@@ -171,8 +183,19 @@ export default function CandidatesTable({ candidates, onViewCandidate }) {
                       : <i className="fas fa-envelope" />}
                   </button>
                 </td>
-                <td>
-                  <button className="btn btn-danger btn-sm" onClick={() => deleteCandidates([c.id]).then(() => { showNotification('Deleted', 'success'); window.location.reload(); })}>
+                <td style={{ textAlign: 'center' }}>
+                  <button 
+                    className="btn btn-danger btn-sm" 
+                    style={{ width: 32, height: 32, padding: 0, borderRadius: 6 }}
+                    onClick={() => {
+                      if (window.confirm('Delete this candidate?')) {
+                        deleteCandidates([c.id]).then(() => { 
+                          showNotification('Deleted', 'success'); 
+                          window.location.reload(); 
+                        });
+                      }
+                    }}
+                  >
                     <i className="fas fa-trash"></i>
                   </button>
                 </td>

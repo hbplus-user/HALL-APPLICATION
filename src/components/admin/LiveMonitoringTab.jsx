@@ -316,6 +316,18 @@ function CandidateCard({ candidate, onViewDetails, tick }) {
           onClick={() => onViewDetails(candidate)}>
           <i className="fas fa-eye" /> View
         </button>
+        <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem' }}
+          disabled={sending} onClick={async () => {
+            setSending(true);
+            try {
+              const { updateCandidateData } = await import('../../services/candidateService');
+              await updateCandidateData(candidate.id, { status: 'qualified' });
+              showNotification(`Qualified ${candidate.name}`, 'success');
+            } catch (e) { showNotification('Error: ' + e.message, 'error'); }
+            finally { setSending(false); }
+          }}>
+          <i className="fas fa-check" /> Qualify
+        </button>
         <button className="btn btn-sm"
           style={{ fontSize: '0.75rem', background: '#f59e0b', color: '#000', border: 'none' }}
           disabled={sending} onClick={() => doCommand('warn')}>

@@ -128,6 +128,39 @@ export const findCandidateByEmail = async (email) => {
   }
 };
 
+export const findCandidateByToken = async (email, tokenId) => {
+  // First try: look up by email + token_id (requires token_id column)
+  try {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('email', email)
+      .eq('token_id', tokenId)
+      .in('status', ['pending', 'in-progress'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    if (!error && data) return mapToFrontend(data);
+  } catch (_) { /* column may not exist yet */ }
+
+  // Fallback: look up by email + status (works without token_id column)
+  try {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('email', email)
+      .in('status', ['pending', 'in-progress'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    if (error && error.code !== 'PGRST116') return null;
+    return mapToFrontend(data);
+  } catch (e) {
+    return null;
+  }
+};
+
+
 export const getCandidateById = async (id) => {
   try {
     const { data, error } = await supabase
@@ -206,6 +239,13 @@ export const updateCandidateData = async (candidateId, updateData) => {
 
 export const deleteCandidates = async (ids) => {
   try {
+    const { deleteCandidateFiles } = await import('./storageService');
+    
+    // Delete files for each candidate
+    for (const id of ids) {
+      await deleteCandidateFiles(id);
+    }
+
     const { error } = await supabase.from(TABLE).delete().in('id', ids);
     if (error) throw error;
     return true;

@@ -66,6 +66,10 @@ export default function ExamPage() {
   const tabRef = useRef(tabSwitches);
   const phoneRef = useRef(phoneDetections);
   const speakRef = useRef(speakingViolations);
+  // CRITICAL: Keep examQuestions and candidate in refs so async closures always
+  // have the current data even if component is re-rendering or state is stale
+  const examQuestionsRef = useRef(examQuestions);
+  const candidateIdRef = useRef(candidate?.id);
 
   useEffect(() => { answersRef.current = candidateAnswers; }, [candidateAnswers]);
   useEffect(() => { qIndexRef.current = currentQuestionIndex; }, [currentQuestionIndex]);
@@ -74,6 +78,8 @@ export default function ExamPage() {
   useEffect(() => { tabRef.current = tabSwitches; }, [tabSwitches]);
   useEffect(() => { phoneRef.current = phoneDetections; }, [phoneDetections]);
   useEffect(() => { speakRef.current = speakingViolations; }, [speakingViolations]);
+  useEffect(() => { examQuestionsRef.current = examQuestions; }, [examQuestions]);
+  useEffect(() => { candidateIdRef.current = candidate?.id; }, [candidate?.id]);
 
   // ── Proctoring state (ref — no re-renders on each frame) ──────────────────
   const ps = useRef({
@@ -135,7 +141,7 @@ export default function ExamPage() {
     }, []),
   });
 
-  const { startRecording, stopRecording } = useExamRecording();
+  const { startRecording, stopRecording, recordClip } = useExamRecording();
 
   // ── Mount / unmount ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -189,6 +195,13 @@ export default function ExamPage() {
     liveSyncRef.current = setInterval(async () => {
       if (!examInProgressRef.current || !candidateId) return;
       try {
+        const riskScore = Math.min(100,
+          ps.current.totalWarnings * 20 +
+          tabRef.current * 15 +
+          phoneRef.current * 25 +
+          speakRef.current * 10
+        );
+
         await updateCandidateData(candidateId, {
           currentQuestionIndex: qIndexRef.current,
           totalQuestions: examQuestions.length,
@@ -198,6 +211,7 @@ export default function ExamPage() {
           phoneDetections: phoneRef.current,
           speakingViolations: speakRef.current,
           warningTimestamps: warnTsRef.current,
+          riskScore: riskScore,
         });
       } catch (e) { console.warn('Live sync error:', e); }
     }, LIVE_SYNC_INTERVAL);
@@ -244,7 +258,7 @@ export default function ExamPage() {
       await initObjectDetection();
       const audioStream = new MediaStream(stream.getAudioTracks());
       await initAudio(audioStream);
-      await startRecording(stream);
+      // await startRecording(stream); // DISABLED: Only recording warning clips now
 
       // Start proctoring rAF loop
       window.requestAnimationFrame(proctoringLoop);
@@ -482,8 +496,32 @@ export default function ExamPage() {
     const ts = { time: Math.floor((Date.now() - examStartTimeMsRef.current) / 1000), reason: reasonCode };
     warnTsRef.current = [...warnTsRef.current, ts];
 
-    // Async snapshot (non-blocking)
-    takeSnapshot(reasonCode).catch(() => { });
+    // Async snapshot and clip recording (non-blocking)
+    (async () => {
+      try {
+        const video = examCameraRef.current;
+        if (!video || !streamRef.current) return;
+        
+        // Take snapshot first
+        const snapshot = await takeSnapshot(reasonCode);
+        
+        // Record a 5-second clip
+        const clipBlob = await recordClip(streamRef.current, 5000);
+        if (clipBlob) {
+          const res = await uploadRecording(clipBlob, candidate.id);
+          if (res) {
+            // Update the specific timestamp entry with the video URL
+            const updatedTs = warnTsRef.current.map(item => 
+              (item.time === ts.time && item.reason === ts.reason) 
+                ? { ...item, videoUrl: res.url, snapshotUrl: snapshot?.url } 
+                : item
+            );
+            warnTsRef.current = updatedTs;
+            await updateCandidateData(candidate.id, { warningTimestamps: updatedTs });
+          }
+        }
+      } catch (e) { console.error('Clip recording/upload error:', e); }
+    })();
 
     // Increment per-type counter
     const p = ps.current;
@@ -609,17 +647,8 @@ export default function ExamPage() {
     stopTimer();
     if (liveSyncRef.current) clearInterval(liveSyncRef.current);
 
-    let recordingUrl = null, recordingPath = null;
-    try {
-      const blob = await stopRecording();
-      if (blob?.size > 0) {
-        const res = await uploadRecording(blob, candidate.id);
-        if (res) { recordingUrl = res.url; recordingPath = res.path; }
-      }
-    } catch (e) { console.error('Recording upload error:', e); }
-
     cleanup();
-    return { recordingUrl, recordingPath };
+    return { recordingUrl: null, recordingPath: null };
   };
 
   // ── Disqualify ────────────────────────────────────────────────────────────
@@ -631,16 +660,18 @@ export default function ExamPage() {
     setDisqualificationReason(reason);
 
     const ans = answersRef.current;
-    const score = examQuestions.length > 0
-      ? Math.round(examQuestions.filter((q, i) => ans[i] === q.correctAnswer).length / examQuestions.length * 100) : 0;
+    const qs = examQuestionsRef.current;
+    const cId = candidateIdRef.current;
+    const score = qs.length > 0
+      ? Math.round(qs.filter((q, i) => ans[i] === q.correctAnswer).length / qs.length * 100) : 0;
 
     try {
-      await updateCandidateData(candidate.id, {
+      await updateCandidateData(cId, {
         status: 'disqualified',
         disqualificationReason: reason,
         examEndTime: new Date().toISOString(),
         score,
-        examResults: { questions: examQuestions, answers: ans },
+        examResults: { questions: qs, answers: ans },
         recordingUrl: recordingUrl || null,
         recordingPath: recordingPath || null,
         warningTimestamps: warnTsRef.current,
@@ -649,7 +680,7 @@ export default function ExamPage() {
         tabSwitches: tabRef.current,
         phoneDetections: phoneRef.current,
         speakingViolations: speakRef.current,
-        totalQuestions: examQuestions.length,
+        totalQuestions: qs.length,
       });
     } catch (e) { console.error('Disqualify DB error:', e); }
 
@@ -662,31 +693,74 @@ export default function ExamPage() {
     if (!examInProgressRef.current || submitCalledRef.current) return;
     submitCalledRef.current = true;
 
-    const { recordingUrl, recordingPath } = await finalizeExam();
+    // 1. Immediately stop timers and intervals to freeze the state
+    examInProgressRef.current = false;
+    setExamInProgress(false);
+    stopTimer();
+    if (liveSyncRef.current) clearInterval(liveSyncRef.current);
 
     const ans = answersRef.current;
-    const correct = examQuestions.filter((q, i) => ans[i] === q.correctAnswer).length;
-    const score = examQuestions.length > 0 ? Math.round((correct / examQuestions.length) * 100) : 0;
+    // Use ref to ensure we have the correct questions even if state was stale
+    const qs = examQuestionsRef.current;
+    const cId = candidateIdRef.current;
+    const correct = qs.filter((q, i) => ans[i] === q.correctAnswer).length;
+    const score = qs.length > 0 ? Math.round((correct / qs.length) * 100) : 0;
+    const endTime = new Date().toISOString();
+    
+    const riskScore = Math.min(100,
+      ps.current.totalWarnings * 20 +
+      tabRef.current * 15 +
+      phoneRef.current * 25 +
+      speakRef.current * 10
+    );
 
+    console.log(`[Submit] Questions: ${qs.length}, Correct: ${correct}, Score: ${score}%, CandidateId: ${cId}`);
+
+    // 2. SAVE CORE DATA IMMEDIATELY (Status, Score, Answers, Risk)
     try {
-      await updateCandidateData(candidate.id, {
+      const success = await updateCandidateData(cId, {
         status: 'completed',
         score,
-        examEndTime: new Date().toISOString(),
-        examResults: { questions: examQuestions, answers: ans },
-        recordingUrl: recordingUrl || null,
-        recordingPath: recordingPath || null,
+        riskScore,
+        examEndTime: endTime,
+        examResults: { questions: qs, answers: ans },
         warningTimestamps: warnTsRef.current,
         proctoringSnapshots: snapshotsRef.current,
         warningCount: ps.current.totalWarnings,
         tabSwitches: tabRef.current,
         phoneDetections: phoneRef.current,
         speakingViolations: speakRef.current,
-        totalQuestions: examQuestions.length,
+        totalQuestions: qs.length,
         adminCommand: null,
         admin_command: null,
       });
-    } catch (e) { console.error('Submit DB error:', e); }
+      
+      if (!success) {
+        throw new Error('Database update returned failure');
+      }
+    } catch (e) {
+      console.error('Core data submit error:', e);
+      showNotification('Submission error. Retrying...', 'warning');
+      // Retry once
+      await new Promise(r => setTimeout(r, 1500));
+      await updateCandidateData(cId, { status: 'completed', score, riskScore });
+    }
+
+    // Small delay to ensure Supabase triggers have finished
+    await new Promise(r => setTimeout(r, 800));
+
+    // 3. Finalize Recording
+    const { recordingUrl, recordingPath } = await finalizeExam();
+
+    // 4. Update recording info if we got it
+    if (recordingUrl) {
+      try {
+        await updateCandidateData(candidate.id, {
+          recordingUrl,
+          recordingPath,
+        });
+      } catch (e) { console.error('Recording update error:', e); }
+    }
 
     setCandidate(prev => ({ ...prev, status: 'completed' }));
     navigate('/exam/complete');

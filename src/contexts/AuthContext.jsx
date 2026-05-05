@@ -24,14 +24,35 @@ export const AuthProvider = ({ children }) => {
       });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      console.log('AuthProvider: Auth state change:', _event, session?.user?.email || 'No session');
-      setCurrentAdmin(session?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const user = session?.user ?? null;
+      
+      if (user) {
+        const email = user.email || '';
+        const isInternal = email.endsWith('@hbplus.fit');
+        
+        // Check if user is in the 'admins' table (whitelist)
+        const { data: adminRecord } = await supabase
+          .from('admins')
+          .select('id')
+          .eq('email', email)
+          .single();
+
+        if (!isInternal || !adminRecord) {
+          console.warn('Unauthorized admin access attempt:', email);
+          await supabase.auth.signOut();
+          setCurrentAdmin(null);
+          // We can't easily show a notification here because we're in the provider,
+          // but logging out is the primary security measure.
+          return;
+        }
+      }
+
+      setCurrentAdmin(user);
       setLoading(false);
     });
 
     return () => {
-      console.log('AuthProvider: Unsubscribing...');
       subscription.unsubscribe();
     };
   }, []);

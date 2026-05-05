@@ -169,9 +169,20 @@ export default function CandidateModal({ candidate, onClose, onUpdate }) {
                     const m = Math.floor(ts.time / 60).toString().padStart(2, '0');
                     const s = (ts.time % 60).toString().padStart(2, '0');
                     return (
-                      <button key={i} className="timestamp-btn" onClick={() => handleSeekVideo(ts.time)}>
-                        <i className="fas fa-flag"></i> {m}:{s} – {ts.reason.replace(/_/g, ' ')}
-                      </button>
+                      <div key={i} className="timestamp-item-container" style={{ marginBottom: 15, padding: '10px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                        <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <i className="fas fa-flag" style={{ color: '#ef4444' }}></i>
+                          <span>{m}:{s} – {ts.reason.replace(/_/g, ' ')}</span>
+                        </div>
+                        {ts.videoUrl && (
+                          <div style={{ marginTop: 8 }}>
+                            <video src={ts.videoUrl} controls width="100%" style={{ borderRadius: 6, maxHeight: 200, background: '#000' }} />
+                          </div>
+                        )}
+                        {!ts.videoUrl && ts.snapshotUrl && (
+                          <img src={ts.snapshotUrl} alt="Violation" style={{ width: '100%', borderRadius: 6, marginTop: 5 }} />
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -180,7 +191,7 @@ export default function CandidateModal({ candidate, onClose, onUpdate }) {
           </div>
 
           {/* Exam Results */}
-          {candidate.examResults && (
+          {candidate.examResults ? (
             <div className="exam-results mt-4">
               <div className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
                 <h4>Exam Results ({correct}/{total})</h4>
@@ -202,6 +213,16 @@ export default function CandidateModal({ candidate, onClose, onUpdate }) {
                 );
               })}
             </div>
+          ) : (
+            candidate.status !== 'in-progress' && (
+              <div className="exam-results mt-4" style={{ padding: '20px', textAlign: 'center', background: '#fef2f2', borderRadius: 10, border: '1px solid #fee2e2' }}>
+                <i className="fas fa-exclamation-circle" style={{ color: '#dc2626', fontSize: '1.5rem', marginBottom: 10 }} />
+                <h4 style={{ color: '#991b1b', margin: '0 0 5px 0' }}>No Answer Data Found</h4>
+                <p style={{ fontSize: '0.85rem', color: '#b91c1c', margin: 0 }}>
+                  The candidate may have exited the browser before the results could sync, or the session was interrupted.
+                </p>
+              </div>
+            )
           )}
 
           {/* Snapshots */}

@@ -111,3 +111,23 @@ export const deleteObjectByPath = async (path) => {
     return false;
   }
 };
+
+export const deleteCandidateFiles = async (candidateId) => {
+  if (!candidateId) return;
+  try {
+    // List all files in the candidate's folders
+    const folders = [`snapshots/${candidateId}`, `recordings/${candidateId}`, `photos/${candidateId}`];
+    
+    for (const folder of folders) {
+      const { data: files, error: listError } = await supabase.storage.from(BUCKET).list(folder);
+      if (listError) continue;
+      
+      if (files && files.length > 0) {
+        const pathsToDelete = files.map(f => `${folder}/${f.name}`);
+        await supabase.storage.from(BUCKET).remove(pathsToDelete);
+      }
+    }
+  } catch (e) {
+    console.error('Error deleting candidate files:', e);
+  }
+};
