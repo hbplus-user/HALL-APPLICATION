@@ -71,6 +71,7 @@ export default function InstructionsPage() {
     } finally {
       hideLoader();
     }
+  };
 
   return (
     <div className="container" id="instruction-view">
