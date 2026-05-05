@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { subscribeToCandidates } from '../../services/candidateService';
 import { showNotification } from '../../components/common/NotificationSystem';
 import StatCards from '../../components/admin/StatCards';

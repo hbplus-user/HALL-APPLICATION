@@ -1,50 +1,55 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../services/supabase';
 
-const AuthContext = createContext(null);
-
-export const useAuth = () => useContext(AuthContext);
+// Context — exported alone so Fast Refresh is happy
+export const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [currentAdmin, setCurrentAdmin] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    console.log('AuthProvider: Initializing...');
     // Get initial session
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
-        console.log('AuthProvider: Session retrieved:', session?.user?.email || 'No session');
         setCurrentAdmin(session?.user ?? null);
         setLoading(false);
       })
-      .catch(err => {
-        console.error('AuthProvider: Error getting session:', err);
-        setLoading(false);
-      });
+      .catch(() => setLoading(false));
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const user = session?.user ?? null;
-      
+
       if (user) {
         const email = user.email || '';
         const isInternal = email.endsWith('@hbplus.fit');
-        
-        // Check if user is in the 'admins' table (whitelist)
-        const { data: adminRecord } = await supabase
-          .from('admins')
-          .select('id')
-          .eq('email', email)
-          .single();
 
-        if (!isInternal || !adminRecord) {
-          console.warn('Unauthorized admin access attempt:', email);
+        if (!isInternal) {
+          console.warn('Unauthorized: not an @hbplus.fit account:', email);
           await supabase.auth.signOut();
           setCurrentAdmin(null);
-          // We can't easily show a notification here because we're in the provider,
-          // but logging out is the primary security measure.
+          setLoading(false);
           return;
+        }
+
+        // Check whitelist in admins table (with timeout fallback)
+        try {
+          const { data: adminRecord } = await Promise.race([
+            supabase.from('admins').select('id').eq('email', email).single(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
+          ]);
+
+          if (!adminRecord) {
+            console.warn('Unauthorized: not in admins whitelist:', email);
+            await supabase.auth.signOut();
+            setCurrentAdmin(null);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          // If admins table doesn't exist yet or times out, allow @hbplus.fit through
+          console.warn('Admins table check failed, falling back to domain check only:', e.message);
         }
       }
 
@@ -52,17 +57,13 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const loginWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: window.location.origin + '/admin'
-      }
+      options: { redirectTo: window.location.origin + '/admin' }
     });
     if (error) throw error;
   };

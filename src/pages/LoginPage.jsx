@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 import { useExam } from '../contexts/ExamContext';
 import { findToken, updateToken } from '../services/tokenService';
 import { findCandidateByEmail, findCandidateByToken, setCandidateData, updateCandidateData } from '../services/candidateService';

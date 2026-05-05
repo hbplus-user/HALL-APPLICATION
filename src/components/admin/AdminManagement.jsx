@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createAdminAccount } from '../../services/adminService';
 import { showNotification } from '../common/NotificationSystem';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 
 export default function AdminManagement() {
   const { currentAdmin } = useAuth();
