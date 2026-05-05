@@ -112,20 +112,32 @@ export const deleteObjectByPath = async (path) => {
   }
 };
 
-export const deleteCandidateFiles = async (candidateId) => {
+export const deleteCandidateFiles = async (candidateId, recordingPath = null) => {
   if (!candidateId) return;
   try {
-    // List all files in the candidate's folders
-    const folders = [`snapshots/${candidateId}`, `recordings/${candidateId}`, `photos/${candidateId}`];
-    
+    // Delete all files inside candidate's 3 storage folders
+    const folders = [
+      `photos/${candidateId}`,
+      `snapshots/${candidateId}`,
+      `recordings/${candidateId}`,
+    ];
+
     for (const folder of folders) {
       const { data: files, error: listError } = await supabase.storage.from(BUCKET).list(folder);
       if (listError) continue;
-      
+
       if (files && files.length > 0) {
         const pathsToDelete = files.map(f => `${folder}/${f.name}`);
-        await supabase.storage.from(BUCKET).remove(pathsToDelete);
+        const { error } = await supabase.storage.from(BUCKET).remove(pathsToDelete);
+        if (error) console.warn(`Storage folder delete warning [${folder}]:`, error.message);
+        else console.log(`Deleted ${pathsToDelete.length} file(s) from ${folder}`);
       }
+    }
+
+    // Also delete specific recording_path stored in the candidate's DB row
+    if (recordingPath) {
+      const { error } = await supabase.storage.from(BUCKET).remove([recordingPath]);
+      if (error) console.warn('Storage recording delete warning:', error.message);
     }
   } catch (e) {
     console.error('Error deleting candidate files:', e);

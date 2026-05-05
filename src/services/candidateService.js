@@ -4,11 +4,14 @@ const TABLE = 'candidates';
 
 const mapToFrontend = (c) => {
   if (!c) return null;
+  // Unify photo: prefer 'photo' column (set by PhotoCapturePage), fall back to photo_url
+  const resolvedPhoto = c.photo || c.photo_url || null;
   return {
     ...c,
     subRole: c.sub_role,
     tokenId: c.token_id,
-    photoUrl: c.photo_url,
+    photo: resolvedPhoto,        // profile pic (used everywhere in admin UI)
+    photoUrl: resolvedPhoto,     // alias for backwards compat
     currentQuestionIndex: c.current_question_index ?? 0,
     totalQuestions: c.total_questions ?? 0,
     examStartTime: c.exam_start_time_ms ?? c.exam_start_time,
@@ -240,10 +243,17 @@ export const updateCandidateData = async (candidateId, updateData) => {
 export const deleteCandidates = async (ids) => {
   try {
     const { deleteCandidateFiles } = await import('./storageService');
-    
-    // Delete files for each candidate
+
+    // For each candidate: fetch their data first (recording_path), then delete files, then DB row
     for (const id of ids) {
-      await deleteCandidateFiles(id);
+      // Fetch candidate to get any specific file paths saved in the DB
+      let recordingPath = null;
+      try {
+        const { data } = await supabase.from(TABLE).select('recording_path').eq('id', id).single();
+        recordingPath = data?.recording_path || null;
+      } catch (_) { /* non-fatal */ }
+
+      await deleteCandidateFiles(id, recordingPath);
     }
 
     const { error } = await supabase.from(TABLE).delete().in('id', ids);
