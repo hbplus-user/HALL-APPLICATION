@@ -150,14 +150,20 @@ export const getPacksForCandidate = async (candidate) => {
   try {
     let query = supabase.from(TABLE).select('*');
 
-    if (candidate.role === 'fitness' && candidate.subRole) {
-      query = query.eq('role', 'fitness').eq('sub_role', candidate.subRole);
-    } else {
-      query = query.eq('role', candidate.role);
+    const role = (candidate.role || '').toLowerCase();
+    const subRole = (candidate.subRole || '').toLowerCase();
+
+    if (role === 'fitness' && subRole) {
+      // Use ilike for case-insensitive sub_role match
+      query = query.eq('role', role).ilike('sub_role', subRole);
+    } else if (role) {
+      query = query.eq('role', role);
     }
 
     const { data, error } = await query;
     if (error) throw error;
+
+    console.log(`getPacksForCandidate [role=${role}, subRole=${subRole}]: found ${(data || []).length} pack(s)`);
 
     return (data || []).map(p => ({
       ...p,

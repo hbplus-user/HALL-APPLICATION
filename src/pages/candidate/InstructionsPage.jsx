@@ -37,20 +37,30 @@ export default function InstructionsPage() {
     try {
       // Load question packs
       const packs = await getPacksForCandidate(candidate);
+      console.log('Candidate role:', candidate.role, '| subRole:', candidate.subRole);
+      console.log('Packs returned:', packs.length, packs);
+
       if (!packs || packs.length === 0) {
         setError('No question pack found for your role. Please contact the administrator.');
         hideLoader();
         return;
       }
 
-      // Shuffle and pick questions
-      const allQs = packs.flatMap(pack => pack.questions || []);
+      // Flatten all questions from all packs
+      const allQs = packs.flatMap(pack => {
+        console.log(`Pack "${pack.fileName}" has ${pack.questions?.length || 0} questions`);
+        return pack.questions || [];
+      });
+
+      console.log('Total questions across all packs:', allQs.length);
+
       if (allQs.length === 0) {
         setError('Question pack is empty. Please contact the administrator.');
         hideLoader();
         return;
       }
       const shuffled = [...allQs].sort(() => Math.random() - 0.5).slice(0, Math.min(30, allQs.length));
+      console.log('Shuffled questions to load:', shuffled.length);
       setExamQuestions(shuffled);
       setCandidateAnswers(new Array(shuffled.length).fill(null));
 
@@ -61,7 +71,6 @@ export default function InstructionsPage() {
     } finally {
       hideLoader();
     }
-  };
 
   return (
     <div className="container" id="instruction-view">
