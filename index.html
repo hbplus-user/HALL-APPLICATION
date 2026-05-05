@@ -13,166 +13,79 @@
     <!-- jsPDF — deferred -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
-      /* ── Skeleton base ───────────────────────────────────── */
+      /* Branded Splash Screen */
       #splash {
         position: fixed;
         inset: 0;
         background: #EDE0D0;
-        z-index: 99999;
-        opacity: 1;
-        transition: opacity 0.35s ease;
-        overflow: auto;
-        padding: 20px;
-        box-sizing: border-box;
-        font-family: Tahoma, sans-serif;
-      }
-      #splash.hidden { opacity: 0; pointer-events: none; }
-
-      @keyframes shimmer {
-        0%   { background-position: -600px 0; }
-        100% { background-position: 600px 0; }
-      }
-      .sk {
-        background: linear-gradient(90deg, rgba(169,103,77,0.12) 25%, rgba(169,103,77,0.22) 50%, rgba(169,103,77,0.12) 75%);
-        background-size: 600px 100%;
-        animation: shimmer 1.4s infinite linear;
-        border-radius: 8px;
-      }
-
-      /* ── Splash header ───────────────────────────────────── */
-      #sk-header {
-        background: linear-gradient(to right, #53372B, #A9674D);
-        border-radius: 15px 15px 0 0;
-        padding: 16px 24px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        max-width: 1400px;
-        margin: 0 auto;
-      }
-      #sk-header-title { width: 140px; height: 22px; border-radius: 6px;
-        background: rgba(255,255,255,0.25); animation: shimmer 1.4s infinite linear;
-        background-size: 600px 100%; }
-      #sk-header-right { width: 90px; height: 32px; border-radius: 20px;
-        background: rgba(255,255,255,0.2); animation: shimmer 1.4s infinite linear;
-        background-size: 600px 100%; }
-
-      /* ── Body wrapper ────────────────────────────────────── */
-      #sk-body {
-        background: #fff;
-        border-radius: 0 0 15px 15px;
-        padding: 20px 24px 28px;
-        max-width: 1400px;
-        margin: 0 auto 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-      }
-
-      /* ── Stat cards row ──────────────────────────────────── */
-      #sk-cards {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 14px;
-        margin-bottom: 22px;
-      }
-      .sk-card {
-        background: #f9f6f2;
-        border-radius: 12px;
-        padding: 18px 16px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        transition: opacity 0.5s ease;
       }
-      .sk-card-icon { width: 38px; height: 38px; border-radius: 50%; margin: 0 auto; }
-      .sk-card-num  { width: 60px; height: 26px; margin: 0 auto; }
-      .sk-card-lbl  { width: 90px; height: 14px; margin: 0 auto; border-radius: 4px; }
-
-      /* ── Tabs ────────────────────────────────────────────── */
-      #sk-tabs { display: flex; gap: 0; border-bottom: 2px solid #e8ddd5; margin-bottom: 18px; }
-      .sk-tab  { width: 110px; height: 16px; border-radius: 4px; margin: 10px 18px 10px 0; }
-
-      /* ── Table ───────────────────────────────────────────── */
-      #sk-table { width: 100%; border-collapse: collapse; }
-      .sk-th { background: rgba(116,116,64,0.08); padding: 12px; }
-      .sk-th-inner { height: 14px; border-radius: 4px; }
-      .sk-td { padding: 14px 12px; border-bottom: 1px solid #e8ddd5; vertical-align: middle; }
-      .sk-row-avatar { width: 36px; height: 36px; border-radius: 50%; display: inline-block; }
-      .sk-row-name   { width: 120px; height: 13px; border-radius: 4px; display: inline-block; margin-left: 10px; vertical-align: middle; }
-      .sk-row-badge  { width: 80px; height: 22px; border-radius: 20px; }
-      .sk-row-status { width: 90px; height: 22px; border-radius: 20px; }
-      .sk-row-score  { width: 40px; height: 16px; border-radius: 4px; }
-      .sk-row-btns   { display: flex; gap: 6px; }
-      .sk-btn        { height: 28px; border-radius: 6px; }
+      #splash.hidden { opacity: 0; pointer-events: none; }
+      #splash-logo {
+        font-size: 5rem;
+        font-weight: 900;
+        color: #53372B;
+        letter-spacing: 6px;
+        font-family: Tahoma, sans-serif;
+        margin-bottom: 30px;
+        animation: pulse 2s infinite ease-in-out;
+      }
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.05); opacity: 0.8; }
+      }
+      #splash-bar-wrap {
+        width: 200px;
+        height: 6px;
+        background: rgba(83,55,43,0.15);
+        border-radius: 10px;
+        overflow: hidden;
+        position: relative;
+      }
+      #splash-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #747440, #53372B);
+        border-radius: 10px;
+        animation: loadProgress 2s ease-out forwards;
+      }
+      @keyframes loadProgress {
+        0% { width: 0%; }
+        100% { width: 100%; }
+      }
+      #splash-text {
+        margin-top: 20px;
+        font-size: 0.9rem;
+        color: #A9674D;
+        letter-spacing: 2px;
+        font-family: Tahoma, sans-serif;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
-    <!-- Skeleton screen shown immediately, dismissed once React paints -->
     <div id="splash">
-
-      <!-- Header skeleton -->
-      <div id="sk-header">
-        <div id="sk-header-title"></div>
-        <div id="sk-header-right"></div>
-      </div>
-
-      <!-- Body skeleton -->
-      <div id="sk-body">
-
-        <!-- Stat cards -->
-        <div id="sk-cards">
-          <div class="sk-card"><div class="sk sk-card-icon"></div><div class="sk sk-card-num"></div><div class="sk sk-card-lbl"></div></div>
-          <div class="sk-card"><div class="sk sk-card-icon"></div><div class="sk sk-card-num"></div><div class="sk sk-card-lbl"></div></div>
-          <div class="sk-card"><div class="sk sk-card-icon"></div><div class="sk sk-card-num"></div><div class="sk sk-card-lbl"></div></div>
-          <div class="sk-card"><div class="sk sk-card-icon"></div><div class="sk sk-card-num"></div><div class="sk sk-card-lbl"></div></div>
-        </div>
-
-        <!-- Tabs -->
-        <div id="sk-tabs">
-          <div class="sk sk-tab"></div>
-          <div class="sk sk-tab"></div>
-          <div class="sk sk-tab"></div>
-          <div class="sk sk-tab"></div>
-          <div class="sk sk-tab"></div>
-        </div>
-
-        <!-- Table -->
-        <table id="sk-table">
-          <thead>
-            <tr>
-              <th class="sk-th"><div class="sk sk-th-inner" style="width:140px"></div></th>
-              <th class="sk-th"><div class="sk sk-th-inner" style="width:80px"></div></th>
-              <th class="sk-th"><div class="sk sk-th-inner" style="width:80px"></div></th>
-              <th class="sk-th"><div class="sk sk-th-inner" style="width:60px"></div></th>
-              <th class="sk-th"><div class="sk sk-th-inner" style="width:60px"></div></th>
-              <th class="sk-th"><div class="sk sk-th-inner" style="width:90px"></div></th>
-            </tr>
-          </thead>
-          <tbody id="sk-tbody"></tbody>
-        </table>
-      </div>
+      <div id="splash-logo">HB+</div>
+      <div id="splash-bar-wrap"><div id="splash-bar"></div></div>
+      <div id="splash-text">System Initializing</div>
     </div>
 
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
 
     <script>
-      // Generate 6 skeleton rows
-      var tbody = document.getElementById('sk-tbody');
-      for (var i = 0; i < 6; i++) {
-        tbody.innerHTML += '<tr>' +
-          '<td class="sk-td"><div class="sk sk-row-avatar" style="vertical-align:middle;display:inline-block"></div><div class="sk sk-row-name"></div></td>' +
-          '<td class="sk-td"><div class="sk sk-row-badge"></div></td>' +
-          '<td class="sk-td"><div class="sk sk-row-status"></div></td>' +
-          '<td class="sk-td"><div class="sk sk-row-score"></div></td>' +
-          '<td class="sk-td"><div class="sk sk-row-score"></div></td>' +
-          '<td class="sk-td"><div class="sk-row-btns"><div class="sk sk-btn" style="width:68px"></div><div class="sk sk-btn" style="width:50px"></div></div></td>' +
-        '</tr>';
-      }
       // Hide splash once React has painted the first frame
       window.__hideSplash = function () {
         var s = document.getElementById('splash');
         if (s) {
           s.classList.add('hidden');
-          setTimeout(function () { s.remove(); }, 400);
+          setTimeout(function () { s.remove(); }, 500);
         }
       };
     </script>

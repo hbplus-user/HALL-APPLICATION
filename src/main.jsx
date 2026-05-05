@@ -13,6 +13,8 @@ root.render(
 // Hide the HTML splash screen once React has painted
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
-    if (typeof window.__hideSplash === 'function') window.__hideSplash();
+    setTimeout(() => {
+      if (typeof window.__hideSplash === 'function') window.__hideSplash();
+    }, 300);
   });
 });
