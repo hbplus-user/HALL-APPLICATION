@@ -20,11 +20,13 @@ const PROCTOR_CONFIG = {
   STRIKES_PER_WARNING: 5,      // 5 sub-strikes → 1 main warning
   MAX_WARNINGS: 3,      // 3 main warnings → disqualify
   headTurnRatioThreshold: 0.18,   // how extreme a head-turn must be
-  gazeRatioThreshold: 0.28,   // how far eyes must look away
+  gazeRatioThreshold: 0.20,   // how far eyes must look away (relaxed for home environments)
+  GAZE_CONSECUTIVE_FRAMES: 4, // gaze must be away for this many consecutive frames to count
   COOLDOWN_MS: 15000,  // min 15s between same-type strikes
-  MIC_SILENCE_THRESHOLD_MS: 30000,  // 30s silence before mic warning
+  MIC_SILENCE_THRESHOLD_MS: 45000,  // 45s of zero audio energy before mic warning
   MOUTH_CLOSED_THRESHOLD: 0.04,
   AUDIO_MISMATCH_FRAMES: 20,
+  BLUR_DEBOUNCE_MS: 600,  // ignore blur if focus returns within this time (OS popup filter)
 };
 
 const SNAPSHOT_INTERVAL = 45000;  // periodic snapshot every 45s
@@ -111,6 +113,9 @@ export default function ExamPage() {
     isFocusLostActive: false,
     hasIssuedEarphoneWarn: false,
 
+    gazeAwayFrames: 0,   // consecutive frames gaze is away (Bug 5 fix)
+    lastSoundEnergy: 0,  // last timestamp any audio energy was detected (Bug 1 fix)
+
     lastStrikeTime: {},
   });
 
@@ -137,7 +142,14 @@ export default function ExamPage() {
       if (!examInProgressRef.current) return;
       ps.current.isSpeaking = true;
       ps.current.lastSoundTime = Date.now();
+      ps.current.lastSoundEnergy = Date.now(); // track any audio activity (Bug 1 fix)
+      ps.current.isMicMutedActive = false;     // audio came in — cancel pending DQ (Bug 1 fix)
       setSpeakingViolations(v => v + 1);
+    }, []),
+    onAudioEnergy: useCallback(() => {
+      if (!examInProgressRef.current) return;
+      ps.current.lastSoundEnergy = Date.now(); // any non-silent frame resets the silence clock (Bug 1 fix)
+      ps.current.isMicMutedActive = false;
     }, []),
   });
 
@@ -232,6 +244,7 @@ export default function ExamPage() {
       examInProgressRef.current = true;
       submitCalledRef.current = false;
       ps.current.lastSoundTime = Date.now();
+      ps.current.lastSoundEnergy = Date.now(); // initialise both clocks at exam start (Bug 1 fix)
 
       setExamInProgress(true);
       setExamStartTimeMs(startMs);
@@ -354,6 +367,10 @@ export default function ExamPage() {
 
     if (!landmarks) {
       ps.current.isFaceVisible = false;
+      // Reset stale flags so face-missing doesn't also stack head/gaze strikes (Bug 3 fix)
+      ps.current.isHeadTurned = false;
+      ps.current.isGazeAway = false;
+      ps.current.gazeAwayFrames = 0;
       return;
     }
     ps.current.isFaceVisible = true;
@@ -373,9 +390,16 @@ export default function ExamPage() {
     if (landmarks[473] && landmarks[468] && faceWidth > 0) {
       const irisAvgX = (landmarks[473].x + landmarks[468].x) / 2;
       const gazeRatio = (irisAvgX - leftCorner) / faceWidth;
-      ps.current.isGazeAway =
+      const gazeOffscreen =
         gazeRatio < PROCTOR_CONFIG.gazeRatioThreshold ||
         gazeRatio > (1 - PROCTOR_CONFIG.gazeRatioThreshold);
+      // Require N consecutive frames to filter transient glances (Bug 5 fix)
+      if (gazeOffscreen) {
+        ps.current.gazeAwayFrames = (ps.current.gazeAwayFrames || 0) + 1;
+      } else {
+        ps.current.gazeAwayFrames = 0;
+      }
+      ps.current.isGazeAway = ps.current.gazeAwayFrames >= PROCTOR_CONFIG.GAZE_CONSECUTIVE_FRAMES;
     }
 
     if (blendshapes) {
@@ -389,13 +413,18 @@ export default function ExamPage() {
     const p = ps.current;
     const now = Date.now();
 
-    // Mic silence
-    if (!p.isMicMutedActive && now - p.lastSoundTime > PROCTOR_CONFIG.MIC_SILENCE_THRESHOLD_MS) {
+    // Mic silence — only DQ if audio energy has been completely absent (Bug 1 fix)
+    const silenceRef = p.lastSoundEnergy || p.lastSoundTime;
+    if (!p.isMicMutedActive && now - silenceRef > PROCTOR_CONFIG.MIC_SILENCE_THRESHOLD_MS) {
       p.isMicMutedActive = true;
       showBannerRef.current?.('⚠️ WARNING: Your microphone seems silent. Please check it.');
       setTimeout(() => {
-        if (examInProgressRef.current && p.isMicMutedActive) {
+        // Re-check audio energy at fire time — if any sound came in, cancel DQ (Bug 1 fix)
+        const latestSilence = ps.current.lastSoundEnergy || ps.current.lastSoundTime;
+        if (examInProgressRef.current && ps.current.isMicMutedActive && now - latestSilence > PROCTOR_CONFIG.MIC_SILENCE_THRESHOLD_MS) {
           handleDisqualifyRef.current?.('Microphone was muted or disconnected.');
+        } else {
+          ps.current.isMicMutedActive = false;
         }
       }, 30000);
     }
@@ -589,12 +618,18 @@ export default function ExamPage() {
 
   const handleWindowBlur = useCallback(() => {
     if (!examInProgressRef.current) return;
-    if (!ps.current.isFocusLostActive) {
-      ps.current.isFocusLostActive = true;
-      fireStrike('Window_Blur',
-        '⚠️ Strike: You left the exam window.',
-        'Leaving exam window detected multiple times.');
-    }
+    if (ps.current.isFocusLostActive) return;
+    // Debounce: wait before counting — OS popups steal and return focus quickly (Bug 2 fix)
+    setTimeout(() => {
+      if (!examInProgressRef.current) return;
+      if (document.hasFocus()) return; // focus returned on its own — skip the strike
+      if (!ps.current.isFocusLostActive) {
+        ps.current.isFocusLostActive = true;
+        fireStrike('Window_Blur',
+          '⚠️ Strike: You left the exam window.',
+          'Leaving exam window detected multiple times.');
+      }
+    }, PROCTOR_CONFIG.BLUR_DEBOUNCE_MS);
   }, []);
 
   const handleMouseLeave = useCallback(() => {

@@ -1,6 +1,6 @@
 import { useRef, useCallback } from 'react';
 
-export const useAudioDetection = ({ onSpeechDetected } = {}) => {
+export const useAudioDetection = ({ onSpeechDetected, onAudioEnergy } = {}) => {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
@@ -40,7 +40,12 @@ export const useAudioDetection = ({ onSpeechDetected } = {}) => {
         bar.style.height = `${Math.max(4, val / 2)}px`;
       });
 
-      // Detect sustained speech
+      // Any audio energy (quiet ambient noise included) resets the mic-silence clock (Bug 1 fix)
+      if (avg > 5 && onAudioEnergy) {
+        onAudioEnergy();
+      }
+
+      // Detect sustained speech (threshold kept higher to avoid spurious speaking-violation counts)
       if (avg > 30) {
         const now = Date.now();
         if (now - lastSpeechTimeRef.current > 3000 && onSpeechDetected) {
@@ -50,7 +55,7 @@ export const useAudioDetection = ({ onSpeechDetected } = {}) => {
       }
     };
     animate();
-  }, [onSpeechDetected]);
+  }, [onSpeechDetected, onAudioEnergy]);
 
   const stopAudio = useCallback(() => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
