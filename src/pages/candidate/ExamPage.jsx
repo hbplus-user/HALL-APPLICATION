@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useExam } from '../../contexts/ExamContext';
 import { useProctor } from '../../contexts/ProctorContext';
 import { subscribeToCandidate, updateCandidateData } from '../../services/candidateService';
+import { supabase } from '../../services/supabase';
 import { uploadSnapshot, uploadRecording } from '../../services/storageService';
 import { updateToken } from '../../services/tokenService';
-import { saveWebRTCOffer, subscribeToWebRTCAnswer, subscribeToWebRTCRequest } from '../../services/liveMonitoringService';
+import { saveWebRTCOffer, subscribeToWebRTCAnswer, subscribeToWebRTCRequest, broadcastLiveFrame } from '../../services/liveMonitoringService';
 import { useFaceDetection } from '../../hooks/useFaceDetection';
 import { useObjectDetection } from '../../hooks/useObjectDetection';
 import { useAudioDetection } from '../../hooks/useAudioDetection';
@@ -56,6 +57,7 @@ export default function ExamPage() {
   const snapIntervalRef = useRef(null);
   const randomSnapRef = useRef(null);
   const liveSyncRef = useRef(null);
+  const frameIntervalRef = useRef(null);
   const rtcPeerRef = useRef(null);
   const examInProgressRef = useRef(false);
   const submitCalledRef = useRef(false);
@@ -153,7 +155,7 @@ export default function ExamPage() {
     }, []),
   });
 
-  const { startRecording, stopRecording, recordClip } = useExamRecording();
+  const { startRecording: _startRecording, stopRecording: _stopRecording, recordClip } = useExamRecording();
 
   // ── Mount / unmount ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -187,20 +189,66 @@ export default function ExamPage() {
   });
 
   // ── Admin command listener ────────────────────────────────────────────────
+  const lastCmdRef = useRef('');
+
+  const executeAdminCommand = useCallback((cmd) => {
+    if (!cmd || cmd === lastCmdRef.current) return;
+    lastCmdRef.current = cmd;
+    // Clear AFTER storing cmd so the poll/realtime don't double-fire
+    updateCandidateData(candidate.id, { admin_command: null }).catch(() => { });
+    if (cmd === 'force-submit') handleSubmitExamRef.current?.('Admin forced submission');
+    else if (cmd === 'qualify') handleSubmitExamRef.current?.('Admin qualified candidate');
+    else if (cmd === 'disqualify') handleDisqualifyRef.current?.('Admin disqualified candidate');
+    else if (cmd === 'warn') issueMainWarning('Admin issued a warning.', 'Admin_Warning');
+    else if (cmd === 'pause') showNotification('⏸ Exam paused by admin', 'warning');
+    else if (cmd === 'resume') showNotification('▶ Exam resumed by admin', 'success');
+    // Reset dedupe key after 5s so same command can be sent again later
+    setTimeout(() => { lastCmdRef.current = ''; }, 5000);
+  }, [candidate?.id]);
+
   useEffect(() => {
     if (!candidate?.id) return;
+
+    // Realtime path — fires instantly when DB changes
     const unsub = subscribeToCandidate(candidate.id, (updated) => {
+      // React to direct status change from admin
+      if (updated.status === 'disqualified' && examInProgressRef.current) {
+        handleDisqualifyRef.current?.('Admin disqualified candidate');
+        return;
+      }
+      if (updated.status === 'completed' && examInProgressRef.current) {
+        handleSubmitExamRef.current?.('Admin submitted exam');
+        return;
+      }
       const cmd = (updated.admin_command || updated.adminCommand || '').trim();
-      if (!cmd) return;
-      updateCandidateData(candidate.id, { adminCommand: null, admin_command: null }).catch(() => { });
-      if (cmd === 'force-submit') handleSubmitExamRef.current?.('Admin forced submission');
-      else if (cmd === 'disqualify') handleDisqualifyRef.current?.('Admin disqualified candidate');
-      else if (cmd === 'warn') issueMainWarning('Admin issued a warning.', 'Admin_Warning');
-      else if (cmd === 'pause') showNotification('⏸ Exam paused by admin', 'warning');
-      else if (cmd === 'resume') showNotification('▶ Exam resumed by admin', 'success');
+      executeAdminCommand(cmd);
     });
-    return unsub;
-  }, [candidate?.id]);
+
+    // Polling fallback — catches commands AND direct status changes from admin
+    const poll = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('candidates')
+          .select('admin_command, status')
+          .eq('id', candidate.id)
+          .single();
+        if (!data) return;
+        // React to direct status changes set by the admin (no command needed)
+        if (data.status === 'disqualified' && examInProgressRef.current) {
+          handleDisqualifyRef.current?.('Admin disqualified candidate');
+          return;
+        }
+        if (data.status === 'completed' && examInProgressRef.current) {
+          handleSubmitExamRef.current?.('Admin submitted exam');
+          return;
+        }
+        const cmd = (data.admin_command || '').trim();
+        executeAdminCommand(cmd);
+      } catch { /* non-fatal */ }
+    }, 4000);
+
+    return () => { unsub(); clearInterval(poll); };
+  }, [candidate?.id, executeAdminCommand]);
 
   // ── Live sync ─────────────────────────────────────────────────────────────
   const startLiveSync = (candidateId) => {
@@ -287,6 +335,17 @@ export default function ExamPage() {
       setTimeout(() => takeSnapshot('exam_start'), 3000);
 
       setupWebRTC(stream);
+
+      // Broadcast a compressed frame every 5s so admin sees live video
+      // Uses Supabase Broadcast — works across any network, no NAT issues
+      frameIntervalRef.current = setInterval(() => {
+        const vid = examCameraRef.current;
+        if (!vid || !examInProgressRef.current) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = 320; canvas.height = 240;
+        canvas.getContext('2d').drawImage(vid, 0, 0, 320, 240);
+        broadcastLiveFrame(candidate.id, canvas.toDataURL('image/jpeg', 0.25));
+      }, 5000);
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
       window.addEventListener('blur', handleWindowBlur);
@@ -681,6 +740,7 @@ export default function ExamPage() {
     setExamInProgress(false);
     stopTimer();
     if (liveSyncRef.current) clearInterval(liveSyncRef.current);
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
 
     cleanup();
     return { recordingUrl: null, recordingPath: null };
@@ -724,7 +784,7 @@ export default function ExamPage() {
   };
 
   // ── Submit ────────────────────────────────────────────────────────────────
-  const handleSubmitExam = async (reason = 'Candidate submitted') => {
+  const handleSubmitExam = async (_reason = 'Candidate submitted') => {
     if (!examInProgressRef.current || submitCalledRef.current) return;
     submitCalledRef.current = true;
 
@@ -733,6 +793,7 @@ export default function ExamPage() {
     setExamInProgress(false);
     stopTimer();
     if (liveSyncRef.current) clearInterval(liveSyncRef.current);
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
 
     const ans = answersRef.current;
     // Use ref to ensure we have the correct questions even if state was stale
@@ -836,6 +897,7 @@ export default function ExamPage() {
     if (snapIntervalRef.current) clearInterval(snapIntervalRef.current);
     if (randomSnapRef.current) clearTimeout(randomSnapRef.current);
     if (liveSyncRef.current) clearInterval(liveSyncRef.current);
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     if (rtcPeerRef.current) rtcPeerRef.current.close();
     document.removeEventListener('visibilitychange', handleVisibilityChange);

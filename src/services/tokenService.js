@@ -16,7 +16,7 @@ const mapToFrontend = (t) => {
 };
 
 const mapToDb = (t) => ({
-  email: t.email,
+  email: (t.email || '').trim().toLowerCase(),
   token: t.token,
   role: t.role,
   sub_role: t.subRole,
@@ -88,7 +88,7 @@ export const findToken = async (email, tokenValue) => {
     const { data, error } = await supabase
       .from(TABLE)
       .select('*')
-      .eq('email', email)
+      .ilike('email', email)
       .eq('token', tokenValue)
       .single();
     if (error && error.code !== 'PGRST116') throw error; // PGRST116 = not found

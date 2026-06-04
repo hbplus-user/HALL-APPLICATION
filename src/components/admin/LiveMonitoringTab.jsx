@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   subscribeToLiveCandidates,
-  subscribeToWebRTCOffer,
-  saveWebRTCAnswer,
   sendAdminCommand,
-  requestWebRTCOffer,
+  subscribeToLiveFrames,
 } from '../../services/liveMonitoringService';
 import { showNotification } from '../common/NotificationSystem';
 
@@ -50,64 +48,45 @@ function timeLeft(startVal, totalSecs = 1800) {
 // ─── Live Video Cell ──────────────────────────────────────────────────────────
 
 function LiveVideoCell({ candidateId, snapshotUrl }) {
-  const videoRef = useRef(null);
-  const peerRef = useRef(null);
-  const [hasStream, setHasStream] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const imgRef = useRef(null);
+  const [liveFrame, setLiveFrame] = useState(null); // broadcast-based frame (primary)
+  const [lastUpdated, setLastUpdated] = useState(null);
 
+  // Primary: subscribe to broadcast frames sent by candidate every 5s
   useEffect(() => {
-    let unsubWrtc;
-    (async () => {
-      try {
-        peerRef.current = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-          ],
-        });
-        peerRef.current.ontrack = (e) => {
-          if (videoRef.current && e.streams?.[0]) {
-            videoRef.current.srcObject = e.streams[0];
-            setHasStream(true);
-          }
-        };
-        unsubWrtc = subscribeToWebRTCOffer(candidateId, async (session) => {
-          if (session.offer && peerRef.current && !peerRef.current.remoteDescription) {
-            await peerRef.current.setRemoteDescription(new RTCSessionDescription(session.offer));
-            const answer = await peerRef.current.createAnswer();
-            await peerRef.current.setLocalDescription(answer);
-            await new Promise(r => setTimeout(r, 500));
-            await saveWebRTCAnswer(candidateId, {
-              type: peerRef.current.localDescription.type,
-              sdp: peerRef.current.localDescription.sdp
-            });
-          }
-        });
-        await requestWebRTCOffer(candidateId);
-      } catch {
-        // WebRTC unavailable — snapshot fallback shown below
-      }
-    })();
-    return () => {
-      if (unsubWrtc) unsubWrtc();
-      if (peerRef.current) peerRef.current.close();
-    };
+    const unsub = subscribeToLiveFrames(candidateId, (frame) => {
+      setLiveFrame(frame);
+      setLastUpdated(Date.now());
+    });
+    return unsub;
   }, [candidateId]);
+
+  // Fallback: if no broadcast frame received in 15s, clear so snapshot shows
+  useEffect(() => {
+    if (!lastUpdated) return;
+    const timer = setTimeout(() => setLiveFrame(null), 15000);
+    return () => clearTimeout(timer);
+  }, [lastUpdated]);
+
+  const hasLive = !!liveFrame;
+  const hasFallback = !hasLive && !!snapshotUrl;
 
   return (
     <div style={{
       position: 'relative', width: '100%', aspectRatio: '16/9',
       background: '#0f172a', borderRadius: 10, overflow: 'hidden',
     }}>
-      <video
-        ref={videoRef} autoPlay playsInline muted={isMuted}
-        style={{ width: '100%', height: '100%', objectFit: 'cover', display: hasStream ? 'block' : 'none' }}
-      />
-      {!hasStream && snapshotUrl && (
-        <img src={snapshotUrl} alt="Last snapshot"
+      {/* Live broadcast frame — updates every 5s */}
+      {hasLive && (
+        <img ref={imgRef} src={liveFrame} alt="Live feed"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
       )}
-      {!hasStream && !snapshotUrl && (
+      {/* Static snapshot fallback */}
+      {hasFallback && (
+        <img src={snapshotUrl} alt="Last snapshot"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }} />
+      )}
+      {!hasLive && !hasFallback && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center', color: '#475569', gap: 6,
@@ -116,34 +95,19 @@ function LiveVideoCell({ candidateId, snapshotUrl }) {
           <span style={{ fontSize: '0.75rem' }}>No feed</span>
         </div>
       )}
-      {/* LIVE badge */}
+      {/* LIVE badge — green when receiving frames, red when no feed */}
       <div style={{
         position: 'absolute', top: 8, left: 8,
-        background: 'rgba(220,38,38,0.9)', color: '#fff',
+        background: hasLive ? 'rgba(22,163,74,0.9)' : 'rgba(220,38,38,0.9)', color: '#fff',
         fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4,
         letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 4, zIndex: 10,
       }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%', background: '#fff',
-          animation: 'livePulse 1.2s infinite', display: 'inline-block',
+          animation: hasLive ? 'livePulse 1.2s infinite' : 'none', display: 'inline-block',
         }} />
-        LIVE
+        {hasLive ? 'LIVE' : hasFallback ? 'SNAPSHOT' : 'NO FEED'}
       </div>
-      {hasStream && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted); }}
-          style={{
-            position: 'absolute', bottom: 8, right: 8,
-            background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none',
-            borderRadius: '50%', width: 28, height: 28,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', zIndex: 10,
-          }}
-        >
-          <i className={`fas fa-volume-${isMuted ? 'mute' : 'up'}`}
-            style={{ fontSize: '0.8rem', color: isMuted ? '#f87171' : '#fff' }} />
-        </button>
-      )}
     </div>
   );
 }
@@ -181,7 +145,7 @@ function ViolationTimeline({ timestamps }) {
 
 // ─── Candidate Card ───────────────────────────────────────────────────────────
 
-function CandidateCard({ candidate, onViewDetails, tick }) {
+function CandidateCard({ candidate, onViewDetails, tick: _tick }) {
   const [sending, setSending] = useState(false);
   const risk = calcRisk(candidate);
   const meta = riskMeta(risk);
@@ -209,10 +173,34 @@ function CandidateCard({ candidate, onViewDetails, tick }) {
   const doCommand = async (cmd) => {
     setSending(true);
     try {
-      await sendAdminCommand(candidate.id, cmd);
-      showNotification(`"${cmd}" sent to ${candidate.name || candidate.email}`, 'success');
+      const { updateCandidateData } = await import('../../services/candidateService');
+      const name = candidate.name || candidate.email;
+
+      if (cmd === 'force-submit' || cmd === 'qualify') {
+        // Directly close the exam from admin side — don't wait for candidate's browser
+        await updateCandidateData(candidate.id, {
+          status: 'completed',
+          exam_end_time: new Date().toISOString(),
+          admin_command: cmd,
+        });
+        showNotification(`${name} submitted`, 'success');
+
+      } else if (cmd === 'disqualify') {
+        await updateCandidateData(candidate.id, {
+          status: 'disqualified',
+          disqualification_reason: 'Admin disqualified candidate',
+          exam_end_time: new Date().toISOString(),
+          admin_command: cmd,
+        });
+        showNotification(`${name} disqualified`, 'error');
+
+      } else {
+        // warn / pause / resume — still command-only (candidate must be active)
+        await sendAdminCommand(candidate.id, cmd);
+        showNotification(`"${cmd}" sent to ${name}`, 'success');
+      }
     } catch (e) {
-      showNotification('Failed to send command: ' + e.message, 'error');
+      showNotification('Failed: ' + e.message, 'error');
     } finally {
       setSending(false);
     }
@@ -317,15 +305,7 @@ function CandidateCard({ candidate, onViewDetails, tick }) {
           <i className="fas fa-eye" /> View
         </button>
         <button className="btn btn-sm btn-success" style={{ fontSize: '0.75rem' }}
-          disabled={sending} onClick={async () => {
-            setSending(true);
-            try {
-              const { updateCandidateData } = await import('../../services/candidateService');
-              await updateCandidateData(candidate.id, { status: 'qualified' });
-              showNotification(`Qualified ${candidate.name}`, 'success');
-            } catch (e) { showNotification('Error: ' + e.message, 'error'); }
-            finally { setSending(false); }
-          }}>
+          disabled={sending} onClick={() => doCommand('qualify')}>
           <i className="fas fa-check" /> Qualify
         </button>
         <button className="btn btn-sm"
@@ -351,9 +331,11 @@ function CandidateCard({ candidate, onViewDetails, tick }) {
 
 export default function LiveMonitoringTab({ onViewCandidate }) {
   const [liveCandidates, setLiveCandidates] = useState([]);
+  const [recentlyDone, setRecentlyDone] = useState([]); // briefly shown after submit/DQ
   const [sortBy, setSortBy] = useState('risk');
   const [filterRisk, setFilterRisk] = useState('all');
   const [tick, setTick] = useState(0);
+  const prevIdsRef = useRef(new Set());
 
   // Re-render every second for elapsed/remaining timers
   useEffect(() => {
@@ -362,7 +344,30 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
   }, []);
 
   useEffect(() => {
-    const unsub = subscribeToLiveCandidates(setLiveCandidates);
+    const unsub = subscribeToLiveCandidates((candidates) => {
+      setLiveCandidates(prev => {
+        // Detect candidates who just left live monitoring (submitted / DQ'd)
+        const newIds = new Set(candidates.map(c => c.id));
+        const removed = prev.filter(c => !newIds.has(c.id));
+        if (removed.length > 0) {
+          setRecentlyDone(rd => {
+            const merged = [...rd];
+            removed.forEach(c => {
+              if (!merged.find(x => x.id === c.id)) merged.push(c);
+            });
+            return merged;
+          });
+          // Auto-clear each removed card after 12 seconds
+          removed.forEach(c => {
+            setTimeout(() => {
+              setRecentlyDone(rd => rd.filter(x => x.id !== c.id));
+            }, 12000);
+          });
+        }
+        prevIdsRef.current = newIds;
+        return candidates;
+      });
+    });
     return unsub;
   }, []);
 
@@ -427,17 +432,53 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
         </div>
       </div>
 
-      {liveCandidates.length === 0 ? (
+      {/* Recently submitted / DQ'd — shown for 12s after leaving live monitoring */}
+      {recentlyDone.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#6b7280', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Recently Completed
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 18 }}>
+            {recentlyDone.map(c => (
+              <div key={c.id} style={{
+                border: '1px solid #d1fae5', borderRadius: 14, background: '#f0fdf4',
+                padding: '14px', display: 'flex', alignItems: 'center', gap: 12,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+              }}>
+                <img
+                  src={c.photo || c.photo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name || c.email)}&background=16a34a&color=fff&size=64`}
+                  alt={c.name}
+                  style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0 }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.88rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {c.name || c.email}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#6b7280' }}>{c.role}</div>
+                </div>
+                <span style={{
+                  background: '#16a34a', color: '#fff', borderRadius: 8,
+                  padding: '4px 10px', fontSize: '0.72rem', fontWeight: 700, flexShrink: 0,
+                }}>
+                  ✓ Submitted
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {liveCandidates.length === 0 && recentlyDone.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--gray)' }}>
           <i className="fas fa-video" style={{ fontSize: '3rem', opacity: 0.3 }} />
           <p style={{ marginTop: 12, fontSize: '1.05rem', fontWeight: 500 }}>No live exams in progress</p>
           <p style={{ fontSize: '0.85rem', opacity: 0.7 }}>Cards appear here in real-time when an exam starts.</p>
         </div>
-      ) : sorted.length === 0 ? (
+      ) : sorted.length === 0 && recentlyDone.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--gray)' }}>
           <p>No candidates match the current filter.</p>
         </div>
-      ) : (
+      ) : sorted.length > 0 ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 18 }}>
           {sorted.map(c => (
             <CandidateCard
@@ -448,7 +489,7 @@ export default function LiveMonitoringTab({ onViewCandidate }) {
             />
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

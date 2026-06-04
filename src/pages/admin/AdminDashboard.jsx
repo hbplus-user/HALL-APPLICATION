@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/useAuth';
-import { subscribeToCandidates } from '../../services/candidateService';
+import { subscribeToCandidates, getCandidates } from '../../services/candidateService';
+import { supabase } from '../../services/supabase';
 import { showNotification } from '../../components/common/NotificationSystem';
 import StatCards from '../../components/admin/StatCards';
 import CandidatesTable from '../../components/admin/CandidatesTable';

@@ -1,8 +1,6 @@
-import { createContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../services/supabase';
-
-// Context — exported alone so Fast Refresh is happy
-export const AuthContext = createContext(null);
+import { AuthContext } from './AuthContextInstance';
 
 // ── Skeleton shown while Supabase resolves the auth session ──────────────────
 const SK = {
@@ -71,61 +69,144 @@ function SkeletonLoader() {
   );
 }
 
+// Helper to inspect localStorage synchronously for an active, unexpired session
+const getInitialAuthState = () => {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const val = localStorage.getItem(key);
+        if (val) {
+          const parsed = JSON.parse(val);
+          if (parsed && parsed.user && parsed.expires_at) {
+            const nowSeconds = Math.floor(Date.now() / 1000);
+            if (parsed.expires_at > nowSeconds + 10) {
+              const user = parsed.user;
+              if (user.email && user.email.endsWith('@hbplus.fit')) {
+                return { currentAdmin: user, loading: false };
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  try {
+    let hasAnyToken = false;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        hasAnyToken = true;
+        break;
+      }
+    }
+    if (!hasAnyToken) {
+      return { currentAdmin: null, loading: false };
+    }
+  } catch (e) {}
+
+  return { currentAdmin: null, loading: true };
+};
+
 // ── Auth Provider ─────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }) => {
-  const [currentAdmin, setCurrentAdmin] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [authState, setAuthState] = useState(() => getInitialAuthState());
+  const { currentAdmin, loading } = authState;
+
+  const setCurrentAdmin = (admin) => {
+    setAuthState(prev => ({ ...prev, currentAdmin: admin }));
+  };
+
+  const setLoading = (isLoading) => {
+    setAuthState(prev => ({ ...prev, loading: isLoading }));
+  };
 
   useEffect(() => {
-    // Get initial session
+    let active = true;
+
+    // Safety timeout: Never let the app hang on the skeleton screen forever.
+    const safetyTimer = setTimeout(() => {
+      if (active) {
+        setLoading(false);
+      }
+    }, 3500);
+
+    // Step 1: getSession() reads from localStorage — zero network, ~5ms.
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
-        setCurrentAdmin(session?.user ?? null);
+        if (!active) return;
+        clearTimeout(safetyTimer);
+        const user = session?.user ?? null;
+        setCurrentAdmin(user?.email?.endsWith('@hbplus.fit') ? user : null);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        if (!active) return;
+        clearTimeout(safetyTimer);
+        setCurrentAdmin(null);
+        setLoading(false);
+      });
 
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    // Step 2: onAuthStateChange runs the security check in the background.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const user = session?.user ?? null;
 
-      if (user) {
-        const email = user.email || '';
-        const isInternal = email.endsWith('@hbplus.fit');
-
-        if (!isInternal) {
-          console.warn('Unauthorized: not an @hbplus.fit account:', email);
-          await supabase.auth.signOut();
+      if (!user) {
+        if (active) {
           setCurrentAdmin(null);
           setLoading(false);
-          return;
         }
+        return;
+      }
 
-        // Check whitelist in admins table (with timeout fallback)
-        try {
-          const { data: adminRecord } = await Promise.race([
-            supabase.from('admins').select('id').eq('email', email).single(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
-          ]);
-
-          if (!adminRecord) {
-            console.warn('Unauthorized: not in admins whitelist:', email);
-            await supabase.auth.signOut();
+      const email = user.email || '';
+      if (!email.endsWith('@hbplus.fit')) {
+        supabase.auth.signOut().then(() => {
+          if (active) {
             setCurrentAdmin(null);
             setLoading(false);
+          }
+        });
+        return;
+      }
+
+      // Check admins table whitelist in the background to avoid blocking Supabase client initialization.
+      (async () => {
+        try {
+          const { data: adminRecord, error } = await supabase
+            .from('admins')
+            .select('id')
+            .ilike('email', email)
+            .single();
+
+          if (error && error.code !== 'PGRST116') {
+            console.warn('Admins table unavailable, allowing by domain:', error.message);
+          } else if (!adminRecord) {
+            console.warn('Unauthorized: not in admins whitelist:', email);
+            await supabase.auth.signOut();
+            if (active) {
+              setCurrentAdmin(null);
+              setLoading(false);
+            }
             return;
           }
         } catch (e) {
-          // Admins table missing or timed out — fall back to domain check only
-          console.warn('Admins table check failed, falling back to domain check only:', e.message);
+          console.warn('Admins whitelist check failed, allowing by domain:', e.message);
         }
-      }
 
-      setCurrentAdmin(user);
-      setLoading(false);
+        if (active) {
+          setCurrentAdmin(user);
+          setLoading(false);
+        }
+      })();
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      clearTimeout(safetyTimer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loginWithGoogle = async () => {
