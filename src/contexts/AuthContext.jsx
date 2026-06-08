@@ -71,6 +71,14 @@ function SkeletonLoader() {
 
 // Helper to inspect localStorage synchronously for an active, unexpired session
 const getInitialAuthState = () => {
+  // If this is an OAuth callback (PKCE code or implicit token in URL), wait for
+  // Supabase to finish the async exchange before rendering protected routes.
+  const search = window.location.search;
+  const hash = window.location.hash;
+  if (search.includes('code=') || hash.includes('access_token=')) {
+    return { currentAdmin: null, loading: true };
+  }
+
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
