@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/useAuth';
-import { subscribeToCandidates, getCandidates } from '../../services/candidateService';
-import { supabase } from '../../services/supabase';
+import { subscribeToCandidates } from '../../services/candidateService';
 import { showNotification } from '../../components/common/NotificationSystem';
 import StatCards from '../../components/admin/StatCards';
 import CandidatesTable from '../../components/admin/CandidatesTable';
@@ -81,34 +80,36 @@ export default function AdminDashboard() {
             ))}
           </div>
 
-          {activeTab === 'candidates' && (
-            <div className="tab-content active" id="candidates">
-              <CandidatesTable
-                candidates={candidates}
-                onViewCandidate={setSelectedCandidate}
-              />
-            </div>
-          )}
-          {activeTab === 'live-monitoring' && (
-            <div className="tab-content active" id="live-monitoring">
-              <LiveMonitoringTab onViewCandidate={setSelectedCandidate} />
-            </div>
-          )}
-          {activeTab === 'manage-questions' && (
-            <div className="tab-content active" id="manage-questions">
-              <QuestionManagement />
-            </div>
-          )}
-          {activeTab === 'generate-tokens' && (
-            <div className="tab-content active" id="generate-tokens">
-              <TokenManagement />
-            </div>
-          )}
-          {activeTab === 'admin-management' && (
-            <div className="tab-content active" id="admin-management">
-              <AdminManagement />
-            </div>
-          )}
+          <div style={{ minHeight: 600 }}>
+            {activeTab === 'candidates' && (
+              <div className="tab-content active" id="candidates">
+                <CandidatesTable
+                  candidates={candidates}
+                  onViewCandidate={setSelectedCandidate}
+                />
+              </div>
+            )}
+            {activeTab === 'live-monitoring' && (
+              <div className="tab-content active" id="live-monitoring">
+                <LiveMonitoringTab onViewCandidate={setSelectedCandidate} />
+              </div>
+            )}
+            {activeTab === 'manage-questions' && (
+              <div className="tab-content active" id="manage-questions">
+                <QuestionManagement />
+              </div>
+            )}
+            {activeTab === 'generate-tokens' && (
+              <div className="tab-content active" id="generate-tokens">
+                <TokenManagement />
+              </div>
+            )}
+            {activeTab === 'admin-management' && (
+              <div className="tab-content active" id="admin-management">
+                <AdminManagement />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
