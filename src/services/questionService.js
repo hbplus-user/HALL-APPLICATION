@@ -152,8 +152,13 @@ export const getPacksForCandidate = async (candidate) => {
 
     const role = (candidate.role || '').toLowerCase();
     const subRole = (candidate.subRole || '').toLowerCase();
+    const assignedPacks = (candidate.assignedPacks || []).filter(Boolean);
 
-    if (role === 'fitness' && subRole) {
+    if (assignedPacks.length > 0) {
+      // Only use the packs the admin picked for this token (e.g. S&C only, or Yoga only).
+      // Matching by role/sub-role would pull in every pack of that type and mix them.
+      query = query.in('id', assignedPacks);
+    } else if (role === 'fitness' && subRole) {
       // Use ilike for case-insensitive sub_role match
       query = query.eq('role', role).ilike('sub_role', subRole);
     } else if (role) {
@@ -163,7 +168,7 @@ export const getPacksForCandidate = async (candidate) => {
     const { data, error } = await query;
     if (error) throw error;
 
-    console.log(`getPacksForCandidate [role=${role}, subRole=${subRole}]: found ${(data || []).length} pack(s)`);
+    console.log(`getPacksForCandidate [role=${role}, subRole=${subRole}, assigned=${assignedPacks.length}]: found ${(data || []).length} pack(s)`);
 
     return (data || []).map(p => ({
       ...p,
