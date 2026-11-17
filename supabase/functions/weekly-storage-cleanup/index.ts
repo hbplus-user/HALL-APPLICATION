@@ -1,16 +1,16 @@
-// Weekly storage cleanup for the 'proctoring' bucket.
-// Deletes candidate photos, snapshots and recordings so the free 1 GB storage limit is never hit.
-// Question PDFs (questions/) are kept.
+// Storage cleanup for the 'proctoring' bucket.
+// Deletes candidate photos, snapshots and recordings once they are 7 days old,
+// so the free 1 GB storage limit is never hit. Question PDFs (questions/) are never deleted.
 //
-// Triggered every Sunday by pg_cron (see supabase/weekly-storage-cleanup.sql).
+// Runs every night via pg_cron (see supabase/weekly-storage-cleanup.sql).
 // Requires the secret CLEANUP_SECRET; the caller must send it in the "x-cleanup-secret" header.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const BUCKET = "proctoring";
 const FOLDERS_TO_CLEAN = ["photos", "snapshots", "recordings"];
-// Skip files from the last few hours so an exam running during the cleanup isn't affected.
-const SKIP_NEWER_THAN_MS = 6 * 60 * 60 * 1000;
+// Files are kept for this many days after upload, then deleted.
+const RETENTION_DAYS = 7;
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -41,14 +41,14 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
-  const cutoff = Date.now() - SKIP_NEWER_THAN_MS;
+  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const summary: Record<string, number> = {};
 
   try {
     for (const folder of FOLDERS_TO_CLEAN) {
       const files = await listFiles(folder);
       const toDelete = files
-        .filter((f) => !f.createdAt || new Date(f.createdAt).getTime() < cutoff)
+        .filter((f) => f.createdAt && new Date(f.createdAt).getTime() < cutoff)
         .map((f) => f.path);
 
       for (let i = 0; i < toDelete.length; i += 100) {
@@ -58,12 +58,12 @@ Deno.serve(async (req) => {
       summary[folder] = toDelete.length;
     }
 
-    console.log("Weekly storage cleanup done:", summary);
+    console.log("Storage cleanup done:", summary);
     return new Response(JSON.stringify({ ok: true, deleted: summary }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
-    console.error("Weekly storage cleanup failed:", e);
+    console.error("Storage cleanup failed:", e);
     return new Response(JSON.stringify({ ok: false, error: String(e), deleted: summary }), { status: 500 });
   }
 });
