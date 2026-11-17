@@ -3,7 +3,7 @@
  */
 import { supabase } from './supabase';
 
-const BASE_URL = window.location.origin;
+const BASE_URL = import.meta.env.VITE_APP_URL || window.location.origin;
 
 function buildExamLink(email, token) {
   const url = new URL(`${BASE_URL}/`);
