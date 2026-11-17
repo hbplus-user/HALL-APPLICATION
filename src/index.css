@@ -748,6 +748,10 @@ body {
     background-color: rgba(83, 55, 43, 0.2);
     color: var(--secondary);
 }
+.role-hr {
+    background-color: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
 
 
 .token-card {

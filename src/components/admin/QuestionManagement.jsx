@@ -169,6 +169,7 @@ export default function QuestionManagement() {
               <option value="account">Account</option>
               <option value="operation">Operation</option>
               <option value="marketing">Marketing</option>
+              <option value="hr">HR</option>
             </select>
           </div>
           {packRole === 'fitness' && (
@@ -208,6 +209,7 @@ export default function QuestionManagement() {
                 <option value="account">Account</option>
                 <option value="operation">Operation</option>
                 <option value="marketing">Marketing</option>
+                <option value="hr">HR</option>
               </select>
             </div>
             {mqRole === 'fitness' && (
@@ -253,6 +255,7 @@ export default function QuestionManagement() {
               <option value="account">Account</option>
               <option value="operation">Operation</option>
               <option value="marketing">Marketing</option>
+              <option value="hr">HR</option>
             </select>
           </div>
         </div>

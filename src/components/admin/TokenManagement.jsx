@@ -318,6 +318,7 @@ export default function TokenManagement() {
           <option value="account">Account</option>
           <option value="operation">Operation</option>
           <option value="marketing">Marketing</option>
+          <option value="hr">HR</option>
         </select>
       </div>
       {role === 'fitness' && (

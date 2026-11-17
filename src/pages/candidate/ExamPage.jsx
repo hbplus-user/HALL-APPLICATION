@@ -914,7 +914,7 @@ export default function ExamPage() {
   const minutes = Math.floor(timeLeft / 60).toString().padStart(2, '0');
   const seconds = (timeLeft % 60).toString().padStart(2, '0');
   const progress = ((currentQuestionIndex + 1) / examQuestions.length) * 100;
-  const roleDisplay = candidate.role?.charAt(0).toUpperCase() + candidate.role?.slice(1);
+  const roleDisplay = candidate.role === 'hr' ? 'HR' : candidate.role?.charAt(0).toUpperCase() + candidate.role?.slice(1);
 
   return (
     <div className="container" id="candidate-exam-view">
