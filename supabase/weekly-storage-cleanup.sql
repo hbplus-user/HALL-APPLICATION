@@ -24,7 +24,7 @@ select cron.schedule(
       'x-cleanup-secret', 'YOUR_CLEANUP_SECRET'
     ),
     body := '{}'::jsonb,
-    timeout_milliseconds := 120000
+    timeout_milliseconds := 300000
   );
   $$
 );
@@ -39,7 +39,7 @@ select net.http_post(
     'x-cleanup-secret', 'YOUR_CLEANUP_SECRET'
   ),
   body := '{}'::jsonb,
-  timeout_milliseconds := 120000
+  timeout_milliseconds := 300000
 ) as request_id;
 
 -- ── Checks ───────────────────────────────────────────────────────────────
